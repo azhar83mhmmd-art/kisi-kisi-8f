@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>KisiKisi 8F Private</title>
+  <link rel="stylesheet" href="style.css"/>
+  <!-- Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
+</head>
+<body>
+
+<!-- =================== BACKGROUND =================== -->
+<div class="bg-wrap">
+  <div class="bg-noise"></div>
+  <div class="bg-grid"></div>
+  <div class="bg-orb orb1"></div>
+  <div class="bg-orb orb2"></div>
+  <div class="bg-orb orb3"></div>
+</div>
+
+<!-- Toast -->
+<div id="toast-container"></div>
+
+<!-- =================== APP =================== -->
+<div id="app">
+
+  <!-- =================== AUTH PAGE =================== -->
+  <div id="page-auth" class="page active">
+    <div class="card fade-up">
+
+      <div class="brand">
+        <div class="brand-mark">📚</div>
+        <div>
+          <div class="brand-name">KisiKisi 8F</div>
+          <div class="brand-sub">Platform Eksklusif · Private</div>
+        </div>
+      </div>
+      <p class="card-subtitle">Akses kisi-kisi ulangan kelas 8F secara eksklusif dan aman.</p>
+
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('login')">Masuk</button>
+        <button class="tab-btn" onclick="switchTab('register')">Daftar</button>
+      </div>
+
+      <!-- ---- LOGIN ---- -->
+      <div id="tab-login">
+        <div id="alert-login" class="alert"></div>
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" id="login-email" placeholder="nama@email.com"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="login-pw" placeholder="••••••••"
+            onkeydown="if(event.key==='Enter') doLogin()"/>
+        </div>
+        <button class="btn btn-primary btn-block" onclick="doLogin()" id="btn-login">
+          Masuk Sekarang →
+        </button>
+      </div>
+
+      <!-- ---- REGISTER ---- -->
+      <div id="tab-register" style="display:none">
+        <div id="alert-reg" class="alert"></div>
+
+        <!-- Step 1 -->
+        <div id="reg-step1">
+          <div class="steps">
+            <div class="step-dot active"></div>
+            <div class="step-dot"></div>
+            <span class="step-label">Langkah 1 dari 2</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Nama Lengkap</label>
+            <input type="text" id="reg-nama" placeholder="Nama lengkap Anda"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Kelas</label>
+            <select id="reg-kelas">
+              <option value="">Pilih kelas</option>
+              <option value="8F">8F</option>
+              <option value="8A">8A</option>
+              <option value="8B">8B</option>
+              <option value="8C">8C</option>
+              <option value="8D">8D</option>
+              <option value="8E">8E</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Kode Rahasia</label>
+            <input type="password" id="reg-kode" placeholder="Masukkan kode dari admin"/>
+            <p class="input-hint">Kode rahasia diberikan oleh admin kelas</p>
+          </div>
+          <button class="btn btn-primary btn-block" onclick="regStep2()">Lanjutkan →</button>
+        </div>
+
+        <!-- Step 2 -->
+        <div id="reg-step2" style="display:none">
+          <div class="steps">
+            <div class="step-dot done"></div>
+            <div class="step-dot active"></div>
+            <span class="step-label">Langkah 2 dari 2</span>
+          </div>
+          <button class="back-btn" onclick="backStep1()">← Kembali</button>
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input type="email" id="reg-email" placeholder="nama@email.com"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input type="password" id="reg-pw" placeholder="Min. 6 karakter"/>
+          </div>
+          <button class="btn btn-primary btn-block" onclick="doRegister()" id="btn-reg">
+            Daftarkan Akun
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- =================== PENDING PAGE =================== -->
+  <div id="page-pending" class="page">
+    <div class="status-wrap fade-up">
+      <div class="status-icon-wrap status-icon-pending">⏳</div>
+      <h2 class="status-title">Menunggu Verifikasi</h2>
+      <p class="status-desc">
+        Pendaftaran Anda telah berhasil dikirim.<br/>
+        Tunggu verifikasi admin — notifikasi akan dikirim melalui email setelah akun Anda disetujui.
+      </p>
+      <div class="hint-box">
+        <strong>ℹ️ Info:</strong> Halaman ini akan otomatis berpindah saat akun Anda disetujui oleh admin. Tidak perlu refresh manual.
+      </div>
+      <div style="margin-top:28px">
+        <button class="btn btn-secondary" onclick="doLogout()">Keluar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== REJECTED PAGE =================== -->
+  <div id="page-rejected" class="page">
+    <div class="status-wrap fade-up">
+      <div class="status-icon-wrap status-icon-rejected">❌</div>
+      <h2 class="status-title" style="color:var(--rose)">Akun Ditolak</h2>
+      <p class="status-desc">
+        Maaf, akun Anda tidak dapat disetujui saat ini.<br/>
+        Hubungi admin kelas untuk informasi lebih lanjut.
+      </p>
+      <div style="margin-top:28px">
+        <button class="btn btn-secondary" onclick="doLogout()">Keluar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== NAVBAR =================== -->
+  <nav class="navbar" id="navbar" style="display:none">
+    <div class="nav-brand">
+      <div class="nav-mark">📚</div>
+      <span class="nav-title">KisiKisi 8F</span>
+    </div>
+    <div class="nav-right">
+      <span class="nav-user-name" id="nav-user-name"></span>
+      <span class="nav-badge" id="nav-role-badge"></span>
+      <button class="btn-nav-logout" onclick="doLogout()">Keluar</button>
+    </div>
+  </nav>
+
+  <!-- =================== SISWA DASHBOARD =================== -->
+  <div id="page-siswa" class="dashboard-page">
+    <div class="dashboard-content">
+      <div class="dash-header fade-up">
+        <h1 class="dash-title">📖 Kisi-Kisi Ulangan</h1>
+        <p class="dash-subtitle">Pilih mata pelajaran untuk melihat kisi-kisi yang tersedia</p>
+      </div>
+      <div class="subject-grid" id="subject-grid"></div>
+      <div id="kisi-section" style="display:none">
+        <div class="section-title" id="kisi-section-title">Kisi-kisi</div>
+        <div id="kisi-loading" class="loading" style="display:none"><div class="spinner"></div></div>
+        <div id="kisi-grid" class="kisi-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== ADMIN DASHBOARD =================== -->
+  <div id="page-admin" class="dashboard-page">
+    <div class="dashboard-content">
+
+      <div class="dash-header fade-up">
+        <h1 class="dash-title">👑 Admin Dashboard</h1>
+        <p class="dash-subtitle">Kelola pendaftar dan kisi-kisi secara real-time</p>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-row fade-up-d1">
+        <div class="stat-card stat-total">
+          <div class="stat-num" id="stat-total">—</div>
+          <div class="stat-label">Total Pendaftar</div>
+        </div>
+        <div class="stat-card stat-pending-c">
+          <div class="stat-num" id="stat-pending">—</div>
+          <div class="stat-label">Menunggu Verifikasi</div>
+        </div>
+        <div class="stat-card stat-approved-c">
+          <div class="stat-num" id="stat-approved">—</div>
+          <div class="stat-label">Disetujui</div>
+        </div>
+      </div>
+
+      <!-- Admin Tabs -->
+      <div class="admin-tabs fade-up-d2">
+        <button class="admin-tab active" onclick="switchAdminTab('pendaftar')">📋 Pendaftar</button>
+        <button class="admin-tab" onclick="switchAdminTab('kelola-kisi')">📚 Kelola Kisi-kisi</button>
+      </div>
+
+      <!-- Panel: Pendaftar -->
+      <div class="admin-panel active" id="panel-pendaftar">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nama</th>
+                <th>Email</th>
+                <th>Kelas</th>
+                <th>Kode Input</th>
+                <th>Tgl. Daftar</th>
+                <th>Status</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="admin-users-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panel: Kelola Kisi -->
+      <div class="admin-panel" id="panel-kelola-kisi">
+        <div class="form-card">
+          <div class="section-title">Tambah Kisi-Kisi Baru</div>
+          <div id="alert-kisi" class="alert"></div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label">Mata Pelajaran</label>
+              <select id="kisi-mapel-input">
+                <option value="">Pilih mata pelajaran</option>
+                <option>Matematika</option>
+                <option>Bahasa Indonesia</option>
+                <option>Bahasa Inggris</option>
+                <option>IPA</option>
+                <option>IPS</option>
+                <option>PPKn</option>
+                <option>Informatika</option>
+                <option>Seni Budaya</option>
+                <option>PJOK</option>
+                <option>Prakarya</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Tanggal &amp; Waktu Buka</label>
+              <input type="datetime-local" id="kisi-tanggal"/>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Judul Kisi-Kisi</label>
+            <input type="text" id="kisi-judul" placeholder="Contoh: Kisi-kisi UH Bab 5"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Isi Kisi-Kisi</label>
+            <textarea id="kisi-isi-input" placeholder="Masukkan isi kisi-kisi...&#10;• Bab 1: ...&#10;• Bab 2: ..."></textarea>
+          </div>
+          <button class="btn btn-primary" onclick="addKisi()" style="padding:12px 28px">
+            + Tambahkan Kisi-Kisi
+          </button>
+        </div>
+
+        <div class="section-title">Semua Kisi-Kisi</div>
+        <div id="admin-kisi-list" class="kisi-grid"></div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /#app -->
+
+<script src="app.js"></script>
+</body>
+</html>
