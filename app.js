@@ -1,161 +1,140 @@
-// ── STATE ──────────────────────────────────────────────────────────────────
+// ── STATE ────────────────────────────────────────────────────
 let currentUser = null, currentProfile = null, currentMapel = null;
-let rtProfiles = null, rtMapel = null, rtBroadcast = null;
+let rtProfiles = null, rtMapel = null, rtKisi = null;
 let selectedRole = 'siswa';
-let seenBroadcasts = JSON.parse(localStorage.getItem('seen_broadcasts') || '[]');
+let allUsers = [];
+let editingMapelId = null;
+let editingKisiId = null;
+let activeAdminMapelId = null;
 
-// ── HELPERS ────────────────────────────────────────────────────────────────
+// ── HELPERS ──────────────────────────────────────────────────
 const q       = id => document.getElementById(id);
 const esc     = s  => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
-const isOnline= ls  => ls && (Date.now() - new Date(ls).getTime()) < 65000;
-const setLoading = (btn, on) => { if (!btn) return; btn.classList.toggle('btn-loading', on); btn.disabled = on; };
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('id-ID',
+  { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
 
-// ── MARKDOWN ───────────────────────────────────────────────────────────────
-function md(text) {
-  if (!text) return '';
-  return text
-    .replace(/^## (.+)$/gm,'<h2>$1</h2>').replace(/^### (.+)$/gm,'<h3>$1</h3>')
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>')
-    .replace(/`(.+?)`/g,'<code>$1</code>')
-    .replace(/^> (.+)$/gm,'<blockquote>$1</blockquote>')
-    .replace(/^- (.+)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>)+/g,'<ul>$&</ul>')
-    .replace(/^(\d+)\. (.+)$/gm,'<li>$2</li>')
-    .replace(/\|(.+)\|/g, m => {
-      const cells = m.slice(1,-1).split('|').map(c => c.trim());
-      return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
-    })
-    .replace(/(<tr>[\s\S]*?<\/tr>)+/g,'<table>$&</table>')
-    .replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
+function setLoading(btn, on) {
+  if (!btn) return;
+  btn.classList.toggle('btn-loading', on);
+  btn.disabled = on;
 }
 
-// ── PAGE ROUTER ────────────────────────────────────────────────────────────
+// ── LOADING SCREEN ───────────────────────────────────────────
+function showAppLoading(msg = 'Memuat...') {
+  const el = q('app-loading');
+  if (el) {
+    el.style.display = 'flex';
+    const t = el.querySelector('.loading-text');
+    if (t) t.textContent = msg;
+  }
+}
+
+function hideAppLoading() {
+  const el = q('app-loading');
+  if (el) {
+    el.style.opacity = '0';
+    setTimeout(() => { el.style.display = 'none'; el.style.opacity = '1'; }, 300);
+  }
+}
+
+// ── ROUTER ───────────────────────────────────────────────────
 function showPage(id) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => {
+    p.classList.remove('active');
+    p.style.display = '';
+  });
   const p = q(id);
-  if (p) { p.classList.add('active'); window.scrollTo(0,0); }
+  if (p) {
+    p.classList.add('active');
+    window.scrollTo(0, 0);
+  }
 }
 
-// ── TOAST ──────────────────────────────────────────────────────────────────
+// ── TOAST ────────────────────────────────────────────────────
 function showToast(title, msg, type = 'info') {
   const icons = { success:'✅', error:'❌', warning:'⚠️', info:'ℹ️' };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span class="t-icon">${icons[type]||'ℹ️'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
-  q('toast-container').appendChild(el);
+  el.innerHTML = `<span class="t-icon">${icons[type]||'ℹ️'}</span>
+    <div><div class="t-title">${esc(title)}</div><div class="t-msg">${esc(msg)}</div></div>`;
+  const tc = q('toast-container');
+  if (tc) tc.appendChild(el);
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 280); }, 4500);
 }
 
-// ── LOADER ─────────────────────────────────────────────────────────────────
-function showLoader(msg) {
-  let el = q('app-loader');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'app-loader';
-    document.body.appendChild(el);
+// ── MARKDOWN ─────────────────────────────────────────────────
+function md(text) {
+  if (!text) return '';
+  return text
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>[\s\S]*?<\/li>)+/g, '<ul>$&</ul>')
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    .replace(/\|(.+)\|/g, m => {
+      const cells = m.slice(1,-1).split('|').map(c => c.trim());
+      return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+    })
+    .replace(/(<tr>[\s\S]*?<\/tr>)+/g, '<table>$&</table>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+}
+
+// ── INIT APP ─────────────────────────────────────────────────
+async function initApp(session) {
+  if (!session) {
+    hideAppLoading();
+    showPage('page-login');
+    return;
   }
-  el.innerHTML = `<div class="loader-inner">
-    <div class="loader-brand"><span class="brand-mark" style="width:52px;height:52px;font-size:22px">K</span></div>
-    <div class="loader-spinner"></div>
-    <div class="loader-msg">${msg || 'Memuat...'}</div>
-  </div>`;
-  el.style.cssText = 'display:flex;opacity:1;';
-}
-function hideLoader() {
-  const el = q('app-loader');
-  if (!el) return;
-  el.style.opacity = '0';
-  setTimeout(() => { el.style.display = 'none'; el.style.opacity = '1'; }, 350);
-}
+  currentUser = session.user;
 
-// ── ROUTE AFTER LOGIN — called when we already have user + profile ─────────
-function enterApp(user, profile) {
-  currentUser    = user;
-  currentProfile = profile;
-  hideLoader();
+  try {
+    const isOAuth = session.user.app_metadata?.provider === 'google';
+    currentProfile = isOAuth
+      ? await ensureProfile(session.user)
+      : await getProfile(session.user.id);
 
-  // Ban check
-  if (profile.ban_type) {
-    if (profile.ban_type === 'temp' && profile.ban_until && new Date(profile.ban_until) <= new Date()) {
-      // Expired ban — unban silently then continue
-      unbanUser(profile.id).then(() => getProfile(user.id).then(p => { if (p) currentProfile = p; }));
-    } else {
-      showBannedPage(profile);
+    if (!currentProfile) {
+      hideAppLoading();
+      await logoutUser();
       return;
     }
+
+    routeProfile(currentProfile);
+  } catch (e) {
+    console.error('initApp error:', e);
+    hideAppLoading();
+    showPage('page-login');
   }
+}
 
-  startPresence();
-
-  if (profile.role === 'admin') {
+function routeProfile(p) {
+  hideAppLoading();
+  if (p.role === 'admin') {
     showToast('Selamat Datang', 'Login sebagai Admin ✦', 'success');
     initAdmin(); showPage('page-admin');
-  } else if (profile.status === 'approved') {
-    showToast('Halo!', `Selamat datang, ${profile.nama_lengkap}.`, 'success');
+  } else if (p.status === 'approved') {
+    showToast('Halo!', `Selamat datang, ${p.nama_lengkap}.`, 'success');
     initDashboard(); showPage('page-dashboard');
-  } else if (profile.status === 'pending') {
+  } else if (p.status === 'pending') {
     showPage('page-pending');
   } else {
     showPage('page-rejected');
   }
-
-  setTimeout(checkAndShowBroadcasts, 1500);
 }
 
-function showBannedPage(p) {
-  const until = p.ban_until ? fmtDate(p.ban_until) : 'Permanen';
-  q('banned-info').innerHTML = `<div class="ban-detail">
-    <div class="ban-row"><span>Tipe</span><span class="ban-val">${p.ban_type === 'temp' ? '⏱️ Sementara' : '🚫 Permanen'}</span></div>
-    <div class="ban-row"><span>Sampai</span><span class="ban-val">${until}</span></div>
-    ${p.ban_reason ? `<div class="ban-row"><span>Alasan</span><span class="ban-val">${esc(p.ban_reason)}</span></div>` : ''}
-  </div>`;
-  showPage('page-banned');
-}
-
-// ── BOOT ───────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  setRole('siswa');
-  showLoader('Memuat...');
-
-  // onAuthStateChange fires immediately with INITIAL_SESSION — use it as the single entry point
-  sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_OUT') {
-      stopPresence();
-      currentUser = currentProfile = null;
-      hideLoader();
-      showPage('page-login');
-      return;
-    }
-
-    if (event === 'INITIAL_SESSION') {
-      if (!session) {
-        // No saved session — go straight to login
-        hideLoader();
-        showPage('page-login');
-      } else {
-        // Returning user — fetch profile then enter
-        currentUser = session.user;
-        const isOAuth = session.user.app_metadata?.provider === 'google';
-        const profile = isOAuth ? await ensureProfile(session.user) : await getProfile(session.user.id);
-        if (!profile) {
-          hideLoader();
-          showPage('page-login');
-        } else {
-          enterApp(session.user, profile);
-        }
-      }
-    }
-    // SIGNED_IN is handled directly by handleLogin / submitOTP — ignore here
-  });
-});
-
-// ── AUTH TABS ──────────────────────────────────────────────────────────────
+// ── AUTH TABS ────────────────────────────────────────────────
 let authTab = 'login';
 function switchTab(tab) {
   authTab = tab;
   q('login-form').style.display    = tab === 'login'    ? 'block' : 'none';
   q('register-form').style.display = tab === 'register' ? 'block' : 'none';
-  q('tab-masuk').classList.toggle('active',  tab === 'login');
+  q('tab-masuk').classList.toggle('active', tab === 'login');
   q('tab-daftar').classList.toggle('active', tab === 'register');
   if (tab === 'register') setRole('siswa');
 }
@@ -164,48 +143,56 @@ function setRole(role) {
   selectedRole = role;
   q('role-siswa').classList.toggle('role-active', role === 'siswa');
   q('role-admin').classList.toggle('role-active', role === 'admin');
-  const w = q('secret-wrap');
-  if (w) w.style.display = role === 'admin' ? 'block' : 'none';
+  const sw = q('secret-wrap');
+  if (sw) sw.style.display = role === 'admin' ? 'block' : 'none';
 }
 
-// ── LOGIN ──────────────────────────────────────────────────────────────────
+// ── LOGIN ─────────────────────────────────────────────────────
 async function handleLogin(e) {
   e.preventDefault();
-  const btn = q('btn-login');
+  const btn   = q('btn-login');
+  const email = q('login-email').value.trim();
+  const pw    = q('login-password').value;
   setLoading(btn, true);
-  const res = await loginUser(q('login-email').value.trim(), q('login-password').value);
+  const res = await loginUser(email, pw);
   setLoading(btn, false);
   if (!res.success) { showToast('Gagal Masuk', res.error, 'error'); return; }
-  // loginUser already fetched profile — go straight to app, no extra fetch
-  enterApp(res.user, res.profile);
+  currentUser = res.user; currentProfile = res.profile;
+  showAppLoading('Memuat profil...');
+  routeProfile(res.profile);
 }
 
-// ── REGISTER ───────────────────────────────────────────────────────────────
+// ── REGISTER ─────────────────────────────────────────────────
 async function handleRegister(e) {
   e.preventDefault();
-  const btn  = q('btn-register');
-  const nama = q('reg-nama').value.trim();
-  const email= q('reg-email').value.trim();
-  const pw   = q('reg-password').value;
+  const btn   = q('btn-register');
+  const nama  = q('reg-nama').value.trim();
+  const email = q('reg-email').value.trim();
+  const pw    = q('reg-password').value;
 
   if (pw.length < 6) { showToast('Error', 'Password minimal 6 karakter.', 'error'); return; }
+
   if (selectedRole === 'admin') {
     const secret = q('reg-secret')?.value.trim();
-    if (secret !== ADMIN_SECRET_CODE) { showToast('Kode Salah', 'Kode rahasia admin tidak valid.', 'error'); return; }
+    if (secret !== ADMIN_SECRET_CODE) {
+      showToast('Kode Salah', 'Kode rahasia admin tidak valid.', 'error');
+      return;
+    }
   }
 
   setLoading(btn, true);
   const res = await initiateRegister(nama, email, pw, '8F', selectedRole);
   setLoading(btn, false);
+
   if (!res.success) { showToast('Error', res.error, 'error'); return; }
 
   q('otp-email-display').textContent = email;
-  q('otp-role-info').textContent     = selectedRole === 'admin' ? 'Admin' : 'Siswa';
+  q('otp-role-info').textContent = selectedRole === 'admin' ? 'Admin' : 'Siswa';
   showPage('page-otp');
   startOtpTimer();
 }
 
-// ── OTP ────────────────────────────────────────────────────────────────────
+// ── OTP TIMER ────────────────────────────────────────────────
 let otpInterval = null;
 function startOtpTimer() {
   let s = 300;
@@ -213,25 +200,30 @@ function startOtpTimer() {
   if (otpInterval) clearInterval(otpInterval);
   otpInterval = setInterval(() => {
     s--;
-    if (el) el.textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
-    if (s <= 0) { clearInterval(otpInterval); if (el) el.textContent = 'Kadaluarsa'; showToast('OTP Kadaluarsa','Silakan daftar ulang.','warning'); }
+    if (el) el.textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+    if (s <= 0) {
+      clearInterval(otpInterval);
+      if (el) el.textContent = 'Kadaluarsa';
+      showToast('OTP Kadaluarsa', 'Silakan daftar ulang.', 'warning');
+    }
   }, 1000);
 }
 
 function otpInput(e, i) {
-  e.target.value = e.target.value.replace(/\D/g,'').slice(-1);
+  e.target.value = e.target.value.replace(/\D/g, '').slice(-1);
   e.target.classList.toggle('on', !!e.target.value);
   if (e.target.value && i < 7) q(`otp-${i+1}`)?.focus();
-  if ([...Array(8)].every((_,j) => q(`otp-${j}`)?.value)) setTimeout(submitOTP, 200);
+  if ([...Array(8)].every((_,j) => q(`otp-${j}`)?.value)) {
+    setTimeout(submitOTP, 200);
+  }
 }
-
 function otpKey(e, i) {
   if (e.key === 'Backspace' && !e.target.value && i > 0) q(`otp-${i-1}`)?.focus();
 }
 
 async function submitOTP() {
-  const otp = [...Array(8)].map((_,i) => q(`otp-${i}`)?.value||'').join('');
-  if (otp.length < 8) { showToast('Error','Isi 8 digit OTP.','error'); return; }
+  const otp = [...Array(8)].map((_,i) => q(`otp-${i}`)?.value || '').join('');
+  if (otp.length < 8) { showToast('Error', 'Isi 8 digit OTP.', 'error'); return; }
 
   const btn = q('btn-verify-otp');
   setLoading(btn, true);
@@ -240,19 +232,22 @@ async function submitOTP() {
 
   if (!res.success) {
     showToast('OTP Gagal', res.error, 'error');
-    [...Array(8)].forEach((_,i) => { const b=q(`otp-${i}`); if(b){b.value='';b.classList.remove('on');} });
+    [...Array(8)].forEach((_,i) => {
+      const b = q(`otp-${i}`);
+      if (b) { b.value = ''; b.classList.remove('on'); }
+    });
     q('otp-0')?.focus();
     return;
   }
 
   clearInterval(otpInterval);
-  // verifyOTPAndRegister already returns user+profile — go straight to app
-  if (res.profile.role === 'admin') {
+  currentUser    = res.user;
+  currentProfile = res.profile;
+
+  if (res.profile?.role === 'admin') {
     showToast('Berhasil!', `Selamat datang, ${res.profile.nama_lengkap}! 🎉`, 'success');
-    enterApp(res.user, res.profile);
+    initAdmin(); showPage('page-admin');
   } else {
-    currentUser    = res.user;
-    currentProfile = res.profile;
     showToast('Berhasil!', 'Akun dibuat. Menunggu persetujuan admin.', 'success');
     showPage('page-pending');
   }
@@ -261,10 +256,13 @@ async function submitOTP() {
 async function handleResendOTP() {
   const res = await resendOTPCode();
   if (!res.success) { showToast('Error', res.error, 'error'); return; }
-  [...Array(8)].forEach((_,i) => { const b=q(`otp-${i}`); if(b){b.value='';b.classList.remove('on');} });
+  [...Array(8)].forEach((_,i) => {
+    const b = q(`otp-${i}`);
+    if (b) { b.value = ''; b.classList.remove('on'); }
+  });
   q('otp-0')?.focus();
   startOtpTimer();
-  showToast('Terkirim','OTP baru dikirim ke email Anda.','info');
+  showToast('Terkirim', 'OTP baru dikirim ke email Anda.', 'info');
 }
 
 async function checkStatus() {
@@ -272,42 +270,12 @@ async function checkStatus() {
   const p = await getProfile(currentUser.id);
   if (!p) return;
   currentProfile = p;
-  if (p.status === 'approved') {
-    showToast('Disetujui!','Selamat, akun Anda disetujui.','success');
-    enterApp(currentUser, p);
-  } else if (p.status === 'rejected') {
-    showPage('page-rejected');
-  } else {
-    showToast('Masih Pending','Akun masih diverifikasi admin.','warning');
-  }
+  if (p.status === 'approved')  { initDashboard(); showPage('page-dashboard'); showToast('Disetujui!', 'Akun Anda disetujui.', 'success'); }
+  else if (p.status === 'rejected') showPage('page-rejected');
+  else showToast('Masih Pending', 'Akun masih diverifikasi admin.', 'warning');
 }
 
-// ── BROADCAST ──────────────────────────────────────────────────────────────
-async function checkAndShowBroadcasts() {
-  const { data } = await getBroadcasts();
-  if (!data?.length) return;
-  const bc = data.find(b => !seenBroadcasts.includes(b.id));
-  if (bc) showBroadcastModal(bc);
-}
-
-function showBroadcastModal(bc) {
-  q('bc-title').textContent  = bc.title || 'Pemberitahuan';
-  q('bc-body').innerHTML     = md(bc.body || '');
-  q('bc-time').textContent   = fmtDate(bc.created_at);
-  q('btn-bc-close').onclick  = () => {
-    seenBroadcasts.push(bc.id);
-    localStorage.setItem('seen_broadcasts', JSON.stringify(seenBroadcasts));
-    closeModal('modal-broadcast');
-    setTimeout(async () => {
-      const { data } = await getBroadcasts();
-      const next = data?.find(b => !seenBroadcasts.includes(b.id));
-      if (next) showBroadcastModal(next);
-    }, 500);
-  };
-  openModal('modal-broadcast');
-}
-
-// ── DASHBOARD ──────────────────────────────────────────────────────────────
+// ── DASHBOARD ────────────────────────────────────────────────
 async function initDashboard() {
   const p = currentProfile;
   if (p) {
@@ -317,43 +285,46 @@ async function initDashboard() {
     q('dash-greeting').textContent = h < 12 ? 'Selamat Pagi' : h < 17 ? 'Selamat Siang' : 'Selamat Malam';
   }
   await loadMapel();
-  rtMapel     = subscribeToMapel(() => loadMapel());
-  rtBroadcast = subscribeToBroadcasts(async payload => {
-    const bc = payload.new;
-    if (bc && !seenBroadcasts.includes(bc.id) && bc.active) setTimeout(() => showBroadcastModal(bc), 500);
-  });
+  if (rtMapel) rtMapel.unsubscribe();
+  rtMapel = subscribeToMapel(() => loadMapel());
 }
 
 async function loadMapel() {
   const grid = q('mapel-grid');
-  grid.innerHTML = [...Array(6)].map(() => `<div class="mapel-card skel-card">
-    <div class="skel" style="width:38px;height:38px;border-radius:10px;margin-bottom:14px"></div>
-    <div class="skel" style="width:70%;height:13px;margin-bottom:8px"></div>
-    <div class="skel" style="width:45%;height:10px"></div>
-  </div>`).join('');
+  if (!grid) return;
+  grid.innerHTML = [...Array(6)].map(() =>
+    `<div class="mapel-card skeleton-card">
+       <div class="skel" style="width:36px;height:36px;border-radius:10px;margin-bottom:14px"></div>
+       <div class="skel" style="width:80%;height:14px;margin-bottom:8px"></div>
+       <div class="skel" style="width:50%;height:11px"></div>
+     </div>`
+  ).join('');
 
   const { data, error } = await getMapel();
-  if (error) { showToast('Error','Gagal memuat mapel.','error'); return; }
-
+  if (error) { showToast('Error', 'Gagal memuat mapel.', 'error'); return; }
   const avail = (data||[]).filter(m => !m.is_locked).length;
-  const totalEl = q('stat-total'); if (totalEl) totalEl.textContent = (data||[]).length;
-  const availEl = q('stat-avail'); if (availEl) availEl.textContent = avail;
 
-  grid.innerHTML = (data||[]).map((m,i) => `
-    <div class="mapel-card ${m.is_locked?'locked':''}"
-      onclick="${m.is_locked?'':` showDisclaimer('${m.id}','${esc(m.nama)}','${m.icon}')`}"
-      style="animation-delay:${i*.06}s;--card-accent:linear-gradient(120deg,${m.color_from},${m.color_to})"
-      title="${m.is_locked?'Terkunci':'Buka kisi-kisi'}">
-      ${m.is_locked?'<span class="mapel-lock">🔒</span>':''}
+  const te = q('stat-total'); if (te) te.textContent = (data||[]).length;
+  const ae = q('stat-avail'); if (ae) ae.textContent = avail;
+
+  grid.innerHTML = (data||[]).length === 0
+    ? `<div class="empty-full"><div class="e-icon">📭</div><p>Belum ada mata pelajaran.</p></div>`
+    : (data||[]).map((m, i) =>
+    `<div class="mapel-card ${m.is_locked ? 'locked' : ''}"
+      onclick="${m.is_locked ? '' : `showDisclaimer('${m.id}','${esc(m.nama)}','${m.icon}')`}"
+      style="animation-delay:${i*.05}s;--card-accent:linear-gradient(135deg,${m.color_from},${m.color_to})"
+      title="${m.is_locked ? 'Terkunci' : 'Buka kisi-kisi'}">
+      ${m.is_locked ? '<span class="mapel-lock">🔒</span>' : ''}
       <span class="mapel-icon">${m.icon}</span>
       <div class="mapel-name">${esc(m.nama)}</div>
-      <div class="mapel-status ${m.is_locked?'lock':'avail'}">
-        <span class="mapel-dot"></span>${m.is_locked?'Terkunci':'Tersedia'}
+      <div class="mapel-status ${m.is_locked ? 'lock' : 'avail'}">
+        <span class="mapel-dot"></span>${m.is_locked ? 'Terkunci' : 'Tersedia'}
       </div>
-    </div>`).join('');
+    </div>`
+  ).join('');
 }
 
-// ── DISCLAIMER + KISI-KISI ─────────────────────────────────────────────────
+// ── DISCLAIMER MODAL ─────────────────────────────────────────
 function showDisclaimer(id, nama, icon) {
   q('disc-icon').textContent = icon;
   q('disc-name').textContent = nama;
@@ -361,6 +332,7 @@ function showDisclaimer(id, nama, icon) {
   openModal('modal-disclaimer');
 }
 
+// ── KISI-KISI PAGE ───────────────────────────────────────────
 async function openKisi(id, nama, icon) {
   currentMapel = { id, nama, icon };
   q('kisi-hero').innerHTML = `
@@ -372,9 +344,10 @@ async function openKisi(id, nama, icon) {
       </div>
     </div>`;
   showPage('page-kisi');
+
   const list = q('kisi-list');
   list.innerHTML = `<div style="padding:0 24px 24px">
-    ${[...Array(3)].map(()=>`<div class="skel" style="height:68px;border-radius:14px;margin-bottom:12px"></div>`).join('')}
+    ${[...Array(3)].map(() => `<div class="skel" style="height:68px;border-radius:14px;margin-bottom:12px"></div>`).join('')}
   </div>`;
 
   const { data, error } = await getKisiKisi(id);
@@ -383,100 +356,108 @@ async function openKisi(id, nama, icon) {
     return;
   }
   list.innerHTML = `<div style="padding:0 24px 32px">` +
-    data.map((item,i) => `
+    data.map((item, i) => `
       <div class="kisi-item" id="ki-${item.id}" style="animation-delay:${i*.07}s">
         <div class="kisi-item-hd" onclick="toggleKisi('${item.id}')">
-          <div class="kisi-row"><span class="tag ${item.tipe}">${item.tipe}</span>
-          <span class="kisi-item-title">${esc(item.judul)}</span></div>
+          <div class="kisi-row">
+            <span class="tag ${item.tipe}">${item.tipe}</span>
+            <span class="kisi-item-title">${esc(item.judul)}</span>
+          </div>
           <span class="chevron">▼</span>
         </div>
-        <div class="kisi-body">${md(item.konten)}</div>
-      </div>`).join('') + `</div>`;
+        <div class="kisi-body"><div class="kisi-body-inner">${md(item.konten)}</div></div>
+      </div>`
+    ).join('') + `</div>`;
+
   if (data[0]) setTimeout(() => toggleKisi(data[0].id), 300);
 }
 
 function toggleKisi(id) { q(`ki-${id}`)?.classList.toggle('open'); }
 function goBack()        { showPage('page-dashboard'); }
 
-// ── ADMIN ──────────────────────────────────────────────────────────────────
+// ── ADMIN INIT ───────────────────────────────────────────────
 function initAdmin() {
   const p = currentProfile;
-  if (p) { q('admin-name').textContent = p.nama_lengkap; q('admin-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase(); }
-  loadAdminStats();
-  adminSection('users');
+  if (p) {
+    q('admin-name').textContent   = p.nama_lengkap;
+    q('admin-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase();
+  }
+  loadAdminStats(); loadUsers(); adminSection('users');
+  if (rtProfiles) rtProfiles.unsubscribe();
   rtProfiles = subscribeToProfiles(() => {
-    loadAdminStats();
-    const cur = document.querySelector('.sidebar-item.active')?.id?.replace('nav-','');
-    if (cur === 'users') loadUsers();
-    showToast('Update','Data pengguna diperbarui.','info');
+    loadAdminStats(); loadUsers();
+    showToast('Update', 'Data pengguna diperbarui.', 'info');
   });
 }
 
 function adminSection(sec) {
-  ['users','mapel','soal','broadcast','monitoring','logs'].forEach(s => {
-    q(`nav-${s}`)?.classList.toggle('active', s === sec);
+  ['users','mapel','soal','stats'].forEach(s => {
+    // Mobile tabs
+    const tab = q(`nav-${s}`);
+    if (tab) tab.classList.toggle('active', s === sec);
+    // Desktop sidebar items (snav- prefix)
+    const snav = q(`snav-${s}`);
+    if (snav) snav.classList.toggle('active', s === sec);
+    // Content panels
     const el = q(`admin-${s}`);
     if (el) el.style.display = s === sec ? 'block' : 'none';
   });
-  if (sec === 'users')      loadUsers();
-  if (sec === 'mapel')      loadAdminMapel();
-  if (sec === 'soal')       loadAdminSoal();
-  if (sec === 'broadcast')  loadAdminBroadcasts();
-  if (sec === 'monitoring') loadMonitoring();
-  if (sec === 'logs')       loadAdminLogs();
+  if (sec === 'users')  loadUsers();
+  if (sec === 'mapel')  loadAdminMapel();
+  if (sec === 'soal')   loadAdminSoalPage();
+  if (sec === 'stats')  loadAdminStats();
 }
 
+// ── ADMIN USERS ──────────────────────────────────────────────
 async function loadAdminStats() {
   const { data } = await getAllUsers();
   if (!data) return;
-  const counts = data.reduce((a,u) => { a[u.status]=(a[u.status]||0)+1; return a; }, {});
-  const online = data.filter(u => isOnline(u.last_seen)).length;
+  allUsers = data;
+  const counts = data.reduce((a,u) => { a[u.status] = (a[u.status]||0)+1; return a; }, {});
   q('a-total').textContent    = data.length;
   q('a-pending').textContent  = counts.pending   || 0;
   q('a-approved').textContent = counts.approved  || 0;
   q('a-rejected').textContent = counts.rejected  || 0;
-  q('a-online').textContent   = online;
-  const today = data.filter(u => new Date(u.created_at).toDateString() === new Date().toDateString()).length;
+  const today = data.filter(u =>
+    new Date(u.created_at).toDateString() === new Date().toDateString()
+  ).length;
   const el = q('stat-today'); if (el) el.textContent = today;
 }
 
 async function loadUsers() {
   const tbody = q('users-tbody');
-  tbody.innerHTML = `<tr><td colspan="7" class="td-empty">Memuat data...</td></tr>`;
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="6" class="td-empty"><div class="skel" style="height:16px;width:60%;margin:0 auto"></div></td></tr>`;
   const { data, error } = await getAllUsers();
-  if (error) { tbody.innerHTML = `<tr><td colspan="7" class="td-empty" style="color:var(--red)">Gagal memuat.</td></tr>`; return; }
-  if (!data.length) { tbody.innerHTML = `<tr><td colspan="7" class="td-empty">Belum ada pengguna.</td></tr>`; return; }
-  tbody.innerHTML = data.map(u => {
-    const online  = isOnline(u.last_seen);
-    const isBanned= u.ban_type != null;
-    return `<tr>
+  if (error) { tbody.innerHTML = `<tr><td colspan="6" class="td-empty" style="color:var(--red)">Gagal memuat data.</td></tr>`; return; }
+  allUsers = data || [];
+  renderUsersTable(allUsers);
+}
+
+function renderUsersTable(data) {
+  const tbody = q('users-tbody');
+  if (!tbody) return;
+  if (!data.length) { tbody.innerHTML = `<tr><td colspan="6" class="td-empty">Belum ada pengguna.</td></tr>`; return; }
+  tbody.innerHTML = data.map(u => `
+    <tr>
       <td><div class="u-cell">
-        <div class="avatar-wrap">
-          <div class="avatar" style="width:32px;height:32px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
-          <span class="presence-dot ${online?'online':'offline'}"></span>
-        </div>
+        <div class="avatar" style="width:32px;height:32px;font-size:11px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
         <div><div class="u-name">${esc(u.nama_lengkap)}</div><div class="u-email">${esc(u.email)}</div></div>
       </div></td>
-      <td>${u.kelas}</td>
+      <td>${esc(u.kelas)}</td>
       <td><span class="badge ${u.role==='admin'?'b-admin':'b-siswa'}">${u.role}</span></td>
-      <td>
-        <span class="badge b-${u.status}">${u.status}</span>
-        ${isBanned?`<span class="badge b-banned" style="margin-left:4px">🚫 ${u.ban_type}</span>`:''}
-      </td>
-      <td style="font-size:11px;color:var(--dim)">${online?'<span style="color:var(--green)">● Online</span>':(u.last_seen?fmtDate(u.last_seen):'—')}</td>
-      <td style="color:var(--dim);font-size:11px">${fmtDate(u.created_at)}</td>
-      <td>${u.role!=='admin'?`<div class="acts">
-        ${u.status!=='approved'&&!isBanned?`<button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">✓</button>`:''}
-        ${u.status!=='rejected'&&!isBanned?`<button class="btn btn-danger btn-sm" onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">✕</button>`:''}
-        ${!isBanned?`<button class="btn btn-warn btn-sm" onclick="openBanModal('${u.id}','${esc(u.nama_lengkap)}')">🚫 Ban</button>`:''}
-        ${isBanned?`<button class="btn btn-success btn-sm" onclick="doUnban('${u.id}','${esc(u.nama_lengkap)}')">🔓 Unban</button>`:''}
-      </div>`:'<span style="color:var(--dim)">—</span>'}</td>
-    </tr>`;
-  }).join('');
+      <td><span class="badge b-${u.status}">${u.status}</span></td>
+      <td class="td-date">${fmtDate(u.created_at)}</td>
+      <td>${u.role !== 'admin' ? `<div class="acts">
+        ${u.status!=='approved' ? `<button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">✓</button>` : ''}
+        ${u.status!=='rejected' ? `<button class="btn btn-danger btn-sm"  onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">✕</button>` : ''}
+        ${u.status!=='pending'  ? `<button class="btn btn-ghost btn-sm"   onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">⏳</button>` : ''}
+      </div>` : '<span style="color:var(--dim)">—</span>'}</td>
+    </tr>`).join('');
 }
 
 async function setStatus(id, status, nama) {
-  if (status === 'rejected' && !confirm(`Tolak akun ${nama}?`)) return;
+  if (status === 'rejected' && !confirm(`Reject akun ${nama}?`)) return;
   const res = await updateUserStatus(id, status);
   const labels = { approved:'✅ Diapprove', rejected:'Direject', pending:'Dikembalikan ke pending' };
   const types  = { approved:'success', rejected:'warning', pending:'info' };
@@ -484,277 +465,264 @@ async function setStatus(id, status, nama) {
   else showToast('Error', res.error, 'error');
 }
 
-function searchUsers(val) {
-  document.querySelectorAll('#users-tbody tr').forEach(r => {
-    r.style.display = r.textContent.toLowerCase().includes(val.toLowerCase()) ? '' : 'none';
-  });
+function searchUsers(q_) {
+  const filtered = allUsers.filter(u =>
+    (u.nama_lengkap + u.email + u.status + u.role).toLowerCase().includes(q_.toLowerCase())
+  );
+  renderUsersTable(filtered);
 }
 
-// ── BAN MODAL ──────────────────────────────────────────────────────────────
-let banTargetId = null;
-function openBanModal(id, nama) {
-  banTargetId = id;
-  q('ban-target-name').textContent = nama;
-  q('ban-reason-input').value = '';
-  q('ban-type-select').value  = 'temp';
-  openModal('modal-ban');
-}
-async function confirmBan() {
-  const type   = q('ban-type-select').value;
-  const reason = q('ban-reason-input').value.trim();
-  if (!reason) { showToast('Error','Alasan ban wajib diisi.','error'); return; }
-  const btn = q('btn-ban-confirm');
-  setLoading(btn, true);
-  const res = await banUser(banTargetId, type, reason);
-  setLoading(btn, false);
-  if (res.success) { showToast('Berhasil',`Pengguna di-ban (${type}).`,'warning'); closeModal('modal-ban'); loadUsers(); loadAdminStats(); }
-  else showToast('Error', res.error, 'error');
-}
-async function doUnban(id, nama) {
-  if (!confirm(`Hapus ban untuk ${nama}?`)) return;
-  const res = await unbanUser(id);
-  if (res.success) { showToast('Berhasil',`${nama} berhasil di-unban.`,'success'); loadUsers(); loadAdminStats(); }
-  else showToast('Error', res.error, 'error');
-}
-
-// ── ADMIN MAPEL ────────────────────────────────────────────────────────────
+// ── ADMIN MAPEL ──────────────────────────────────────────────
 async function loadAdminMapel() {
   const grid = q('admin-mapel-grid');
+  if (!grid) return;
+  grid.innerHTML = `<div class="skel" style="height:90px;border-radius:12px"></div>`.repeat(4);
+
   const { data } = await getMapel();
   if (!data) return;
-  grid.innerHTML = data.map(m => `
+
+  grid.innerHTML = data.length === 0
+    ? `<div class="empty-full" style="grid-column:1/-1"><div class="e-icon">📭</div><p>Belum ada mata pelajaran. Tambah dulu!</p></div>`
+    : data.map(m => `
     <div class="mapel-mgr-card">
       <div class="mapel-mgr-top">
-        <div class="mapel-mgr-name"><span style="font-size:20px">${m.icon}</span><span>${esc(m.nama)}</span></div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-ghost btn-sm" onclick="openEditMapelModal('${m.id}','${esc(m.nama)}','${m.icon}','${m.color_from}','${m.color_to}')">✏️</button>
-          <button class="btn btn-danger btn-sm" onclick="doDeleteMapel('${m.id}','${esc(m.nama)}')">🗑️</button>
-          <label class="toggle">
-            <input type="checkbox" ${!m.is_locked?'checked':''} onchange="toggleMapel('${m.id}',this.checked)">
-            <span class="toggle-track"></span>
-          </label>
+        <div class="mapel-mgr-info">
+          <span class="mapel-mgr-icon">${m.icon}</span>
+          <div>
+            <div class="mapel-mgr-name">${esc(m.nama)}</div>
+            <div class="mapel-mgr-status">Status: <span style="color:${m.is_locked?'var(--red)':'var(--green)'}">
+              ${m.is_locked ? '🔒 Terkunci' : '✅ Tersedia'}</span></div>
+          </div>
         </div>
+        <label class="toggle">
+          <input type="checkbox" ${!m.is_locked ? 'checked' : ''} onchange="toggleMapel('${m.id}',this.checked)">
+          <span class="toggle-track"></span>
+        </label>
       </div>
-      <div class="mapel-mgr-status">Status: <span style="color:${m.is_locked?'var(--red)':'var(--green)'}">
-        ${m.is_locked?'🔒 Terkunci':'✅ Tersedia'}</span></div>
+      <div class="mapel-mgr-actions">
+        <button class="btn btn-ghost btn-sm" onclick="openEditMapel('${m.id}','${esc(m.nama)}','${m.icon}','${m.color_from}','${m.color_to}',${m.urutan})">✏️ Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="openSoalForMapel('${m.id}','${esc(m.nama)}')">📝 Soal</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteMapelConfirm('${m.id}','${esc(m.nama)}')">🗑️ Hapus</button>
+      </div>
     </div>`).join('');
 }
+
 async function toggleMapel(id, enabled) {
   const res = await toggleMapelLock(id, !enabled);
-  if (res.success) showToast('Berhasil',`Mapel ${enabled?'dibuka':'dikunci'}.`,'success');
-  else showToast('Error', res.error, 'error');
-}
-function openAddMapelModal() {
-  q('mapel-modal-title').textContent = 'Tambah Mata Pelajaran';
-  q('mapel-form-id').value = ''; q('mapel-form-nama').value = '';
-  q('mapel-form-icon').value = '📚'; q('mapel-form-color-from').value = '#4f8ef7'; q('mapel-form-color-to').value = '#9b7ef8';
-  openModal('modal-mapel');
-}
-function openEditMapelModal(id, nama, icon, cf, ct) {
-  q('mapel-modal-title').textContent = 'Edit Mata Pelajaran';
-  q('mapel-form-id').value = id; q('mapel-form-nama').value = nama;
-  q('mapel-form-icon').value = icon; q('mapel-form-color-from').value = cf; q('mapel-form-color-to').value = ct;
-  openModal('modal-mapel');
-}
-async function saveMapel() {
-  const btn  = q('btn-save-mapel');
-  const id   = q('mapel-form-id').value;
-  const nama = q('mapel-form-nama').value.trim();
-  const icon = q('mapel-form-icon').value.trim() || '📚';
-  const cf   = q('mapel-form-color-from').value;
-  const ct   = q('mapel-form-color-to').value;
-  if (!nama) { showToast('Error','Nama mapel wajib diisi.','error'); return; }
-  setLoading(btn, true);
-  let res;
-  if (id) {
-    res = await updateMapel(id, { nama, icon, color_from:cf, color_to:ct });
-  } else {
-    const { data: ex } = await getMapel();
-    res = await createMapel({ nama, icon, color_from:cf, color_to:ct, urutan:(ex?.length||0)+1, is_locked:true });
-  }
-  setLoading(btn, false);
-  if (res.success) { showToast('Berhasil', id?'Mapel diperbarui.':'Mapel ditambahkan.','success'); closeModal('modal-mapel'); loadAdminMapel(); }
-  else showToast('Error', res.error, 'error');
-}
-async function doDeleteMapel(id, nama) {
-  if (!confirm(`Hapus mapel "${nama}"? Semua kisi-kisi di dalamnya akan terhapus!`)) return;
-  const res = await deleteMapel(id);
-  if (res.success) { showToast('Berhasil',`Mapel "${nama}" dihapus.`,'success'); loadAdminMapel(); }
+  if (res.success) { showToast('Berhasil', `Mapel ${enabled ? 'dibuka' : 'dikunci'}.`, 'success'); loadAdminMapel(); }
   else showToast('Error', res.error, 'error');
 }
 
-// ── ADMIN SOAL ─────────────────────────────────────────────────────────────
-let currentSoalMapelId = null;
-async function loadAdminSoal() {
-  const { data: mapelList } = await getMapel();
-  if (!mapelList?.length) {
-    q('admin-soal').innerHTML = `<h2 class="sec-title">Manajemen Soal</h2><div class="empty-box">Belum ada mata pelajaran. Tambah mapel dulu.</div>`;
+// ── MAPEL MODAL ───────────────────────────────────────────────
+function openAddMapel() {
+  editingMapelId = null;
+  q('mapel-modal-title').textContent = 'Tambah Mata Pelajaran';
+  q('mapel-form-nama').value  = '';
+  q('mapel-form-icon').value  = '📚';
+  q('mapel-form-from').value  = '#4f8ef7';
+  q('mapel-form-to').value    = '#9b7ef8';
+  q('mapel-form-urutan').value= '0';
+  openModal('modal-mapel');
+}
+
+function openEditMapel(id, nama, icon, from_, to_, urutan) {
+  editingMapelId = id;
+  q('mapel-modal-title').textContent = 'Edit Mata Pelajaran';
+  q('mapel-form-nama').value   = nama;
+  q('mapel-form-icon').value   = icon;
+  q('mapel-form-from').value   = from_;
+  q('mapel-form-to').value     = to_;
+  q('mapel-form-urutan').value = urutan;
+  openModal('modal-mapel');
+}
+
+async function saveMapel() {
+  const nama   = q('mapel-form-nama').value.trim();
+  const icon   = q('mapel-form-icon').value.trim() || '📚';
+  const from_  = q('mapel-form-from').value;
+  const to_    = q('mapel-form-to').value;
+  const urutan = parseInt(q('mapel-form-urutan').value) || 0;
+
+  if (!nama) { showToast('Error', 'Nama mapel wajib diisi.', 'error'); return; }
+
+  const btn = q('btn-save-mapel');
+  setLoading(btn, true);
+
+  const payload = { nama, icon, color_from: from_, color_to: to_, urutan };
+  const res = editingMapelId
+    ? await updateMapel(editingMapelId, payload)
+    : await createMapel({ ...payload, is_locked: true });
+
+  setLoading(btn, false);
+
+  if (res.success) {
+    showToast('Berhasil', editingMapelId ? 'Mapel diperbarui.' : 'Mapel ditambahkan.', 'success');
+    closeModal('modal-mapel');
+    loadAdminMapel();
+  } else {
+    showToast('Error', res.error || 'Gagal menyimpan.', 'error');
+  }
+}
+
+async function deleteMapelConfirm(id, nama) {
+  if (!confirm(`Hapus mapel "${nama}"? Semua kisi-kisi di dalamnya juga akan terhapus.`)) return;
+  const res = await deleteMapel(id);
+  if (res.success) { showToast('Dihapus', `Mapel "${nama}" dihapus.`, 'warning'); loadAdminMapel(); }
+  else showToast('Error', res.error, 'error');
+}
+
+// ── ADMIN SOAL ────────────────────────────────────────────────
+async function loadAdminSoalPage() {
+  // Load mapel list into selector
+  const sel = q('soal-mapel-select');
+  if (!sel) return;
+  const { data } = await getMapel();
+  if (!data?.length) {
+    q('admin-soal').innerHTML = `<h2 class="sec-title">Manajemen Soal / Kisi-kisi</h2><div class="empty-full"><div class="e-icon">📚</div><p>Tambah mata pelajaran terlebih dahulu.</p></div>`;
     return;
   }
-  q('soal-mapel-select').innerHTML = mapelList.map(m => `<option value="${m.id}">${m.icon} ${esc(m.nama)}</option>`).join('');
-  if (!currentSoalMapelId) currentSoalMapelId = mapelList[0].id;
-  q('soal-mapel-select').value = currentSoalMapelId;
-  loadSoalList();
+  sel.innerHTML = `<option value="">-- Pilih Mata Pelajaran --</option>` +
+    data.map(m => `<option value="${m.id}" data-name="${esc(m.nama)}">${m.icon} ${esc(m.nama)}</option>`).join('');
+
+  if (activeAdminMapelId) {
+    sel.value = activeAdminMapelId;
+    loadKisiAdmin(activeAdminMapelId);
+  }
 }
-async function loadSoalList() {
-  const list = q('soal-list');
-  list.innerHTML = `<div class="td-empty">Memuat...</div>`;
-  const { data, error } = await getKisiKisi(currentSoalMapelId);
-  if (error) { list.innerHTML = `<div class="td-empty" style="color:var(--red)">Gagal memuat.</div>`; return; }
-  if (!data?.length) { list.innerHTML = `<div class="empty-box">Belum ada soal. <span class="link" onclick="openAddSoalModal()">+ Tambah sekarang</span></div>`; return; }
-  list.innerHTML = data.map(item => `
-    <div class="soal-card">
-      <div class="soal-card-head">
-        <div class="soal-card-meta"><span class="tag ${item.tipe}">${item.tipe}</span><span class="soal-card-title">${esc(item.judul)}</span></div>
-        <div class="soal-card-acts">
-          <button class="btn btn-ghost btn-sm" onclick="openEditSoalModal('${item.id}','${esc(item.judul)}','${item.tipe}','${esc(item.konten).replace(/'/g,"&#39;")}')">✏️ Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="doDeleteSoal('${item.id}','${esc(item.judul)}')">🗑️</button>
+
+function onSoalMapelChange() {
+  const sel  = q('soal-mapel-select');
+  const id   = sel.value;
+  activeAdminMapelId = id;
+  if (id) loadKisiAdmin(id);
+  else q('kisi-admin-list').innerHTML = `<div class="empty-hint">Pilih mata pelajaran di atas.</div>`;
+}
+
+function openSoalForMapel(mapelId, mapelNama) {
+  activeAdminMapelId = mapelId;
+  adminSection('soal');
+}
+
+async function loadKisiAdmin(mapelId) {
+  const list = q('kisi-admin-list');
+  if (!list) return;
+  list.innerHTML = [...Array(3)].map(() => `<div class="skel" style="height:68px;border-radius:12px;margin-bottom:10px"></div>`).join('');
+
+  const { data, error } = await getKisiKisi(mapelId);
+
+  if (error) { list.innerHTML = `<div class="empty-full" style="color:var(--red)">Gagal memuat data.</div>`; return; }
+  if (!data?.length) {
+    list.innerHTML = `<div class="empty-full"><div class="e-icon">📝</div><p>Belum ada soal/kisi-kisi untuk mapel ini.</p></div>`;
+    return;
+  }
+
+  list.innerHTML = data.map((item, i) => `
+    <div class="kisi-admin-item" style="animation-delay:${i*.04}s">
+      <div class="kisi-admin-hd">
+        <div class="kisi-admin-left">
+          <span class="tag ${item.tipe}">${item.tipe}</span>
+          <span class="kisi-admin-title">${esc(item.judul)}</span>
+        </div>
+        <div class="kisi-admin-acts">
+          <button class="btn btn-ghost btn-sm" onclick="openEditKisi('${item.id}','${esc(item.judul)}','${item.tipe}',${item.urutan},\`${item.konten.replace(/`/g,'\\`')}\`)">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteKisiConfirm('${item.id}','${esc(item.judul)}')">🗑️</button>
         </div>
       </div>
-      <div class="soal-preview">${md(item.konten).replace(/<[^>]+>/g,' ').slice(0,120)}...</div>
+      <div class="kisi-admin-preview">${esc(item.konten.substring(0, 80))}${item.konten.length > 80 ? '...' : ''}</div>
     </div>`).join('');
-}
-function onSoalMapelChange(val) { currentSoalMapelId = val; loadSoalList(); }
-function openAddSoalModal() {
-  q('soal-modal-title').textContent = 'Tambah Soal / Materi';
-  q('soal-form-id').value=''; q('soal-form-judul').value=''; q('soal-form-tipe').value='materi'; q('soal-form-konten').value='';
-  openModal('modal-soal');
-}
-function openEditSoalModal(id, judul, tipe, konten) {
-  q('soal-modal-title').textContent = 'Edit Soal / Materi';
-  q('soal-form-id').value=id; q('soal-form-judul').value=judul; q('soal-form-tipe').value=tipe;
-  q('soal-form-konten').value = konten.replace(/&#39;/g,"'").replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
-  openModal('modal-soal');
-}
-async function saveSoal() {
-  const btn    = q('btn-save-soal');
-  const id     = q('soal-form-id').value;
-  const judul  = q('soal-form-judul').value.trim();
-  const tipe   = q('soal-form-tipe').value;
-  const konten = q('soal-form-konten').value.trim();
-  if (!judul)  { showToast('Error','Judul wajib diisi.','error'); return; }
-  if (!konten) { showToast('Error','Konten wajib diisi.','error'); return; }
-  setLoading(btn, true);
-  let res;
-  if (id) {
-    res = await updateKisiKisi(id, { judul, tipe, konten });
-  } else {
-    const { data: ex } = await getKisiKisi(currentSoalMapelId);
-    res = await createKisiKisi({ mapel_id:currentSoalMapelId, judul, tipe, konten, urutan:(ex?.length||0)+1 });
-  }
-  setLoading(btn, false);
-  if (res.success) { showToast('Berhasil', id?'Soal diperbarui.':'Soal ditambahkan.','success'); closeModal('modal-soal'); loadSoalList(); }
-  else showToast('Error', res.error, 'error');
-}
-async function doDeleteSoal(id, judul) {
-  if (!confirm(`Hapus "${judul}"?`)) return;
-  const res = await deleteKisiKisi(id);
-  if (res.success) { showToast('Berhasil','Soal dihapus.','success'); loadSoalList(); }
-  else showToast('Error', res.error, 'error');
 }
 
-// ── BROADCAST ADMIN ────────────────────────────────────────────────────────
-async function loadAdminBroadcasts() {
-  const list = q('broadcast-list');
-  list.innerHTML = `<div class="td-empty">Memuat...</div>`;
-  const { data, error } = await getBroadcasts();
-  if (error) { list.innerHTML = `<div class="td-empty" style="color:var(--red)">Gagal memuat.</div>`; return; }
-  if (!data?.length) { list.innerHTML = `<div class="empty-box">Belum ada broadcast aktif.</div>`; return; }
-  list.innerHTML = data.map(b => `
-    <div class="bc-card">
-      <div class="bc-head">
-        <div class="bc-title">${esc(b.title)}</div>
-        <button class="btn btn-danger btn-sm" onclick="doDeleteBroadcast('${b.id}')">Hapus</button>
-      </div>
-      <div class="bc-body">${esc(b.body).slice(0,120)}${b.body?.length>120?'...':''}</div>
-      <div class="bc-meta">${fmtDate(b.created_at)}${b.scheduled_at?` · Jadwal: ${fmtDate(b.scheduled_at)}`:''}</div>
-    </div>`).join('');
+// ── KISI MODAL ────────────────────────────────────────────────
+function openAddKisi() {
+  const mapelId = activeAdminMapelId || q('soal-mapel-select')?.value;
+  if (!mapelId) { showToast('Pilih Mapel', 'Pilih mata pelajaran terlebih dahulu.', 'warning'); return; }
+  editingKisiId = null;
+  q('kisi-modal-title').textContent = 'Tambah Soal / Kisi-kisi';
+  q('kisi-form-judul').value  = '';
+  q('kisi-form-tipe').value   = 'materi';
+  q('kisi-form-urutan').value = '0';
+  q('kisi-form-konten').value = '';
+  openModal('modal-kisi');
 }
-async function sendBroadcast() {
-  const btn   = q('btn-send-broadcast');
-  const title = q('bc-form-title').value.trim();
-  const body  = q('bc-form-body').value.trim();
-  const sched = q('bc-form-schedule').value;
-  if (!title) { showToast('Error','Judul wajib diisi.','error'); return; }
-  if (!body)  { showToast('Error','Isi pesan wajib diisi.','error'); return; }
+
+function openEditKisi(id, judul, tipe, urutan, konten) {
+  editingKisiId = id;
+  q('kisi-modal-title').textContent = 'Edit Soal / Kisi-kisi';
+  q('kisi-form-judul').value  = judul;
+  q('kisi-form-tipe').value   = tipe;
+  q('kisi-form-urutan').value = urutan;
+  q('kisi-form-konten').value = konten;
+  openModal('modal-kisi');
+}
+
+async function saveKisi() {
+  const mapelId = activeAdminMapelId || q('soal-mapel-select')?.value;
+  const judul   = q('kisi-form-judul').value.trim();
+  const tipe    = q('kisi-form-tipe').value;
+  const urutan  = parseInt(q('kisi-form-urutan').value) || 0;
+  const konten  = q('kisi-form-konten').value.trim();
+
+  if (!judul)  { showToast('Error', 'Judul wajib diisi.', 'error'); return; }
+  if (!konten) { showToast('Error', 'Konten wajib diisi.', 'error'); return; }
+
+  const btn = q('btn-save-kisi');
   setLoading(btn, true);
-  const res = await createBroadcast(title, body, sched||null);
+
+  const payload = { judul, tipe, urutan, konten };
+  const res = editingKisiId
+    ? await updateKisiKisi(editingKisiId, payload)
+    : await createKisiKisi({ ...payload, mapel_id: mapelId });
+
   setLoading(btn, false);
+
   if (res.success) {
-    showToast('Berhasil','Broadcast dikirim!','success');
-    q('bc-form-title').value=''; q('bc-form-body').value=''; q('bc-form-schedule').value='';
-    loadAdminBroadcasts();
-  } else showToast('Error', res.error, 'error');
+    showToast('Berhasil', editingKisiId ? 'Soal diperbarui.' : 'Soal ditambahkan.', 'success');
+    closeModal('modal-kisi');
+    if (mapelId) loadKisiAdmin(mapelId);
+  } else {
+    showToast('Error', res.error || 'Gagal menyimpan.', 'error');
+  }
 }
-async function doDeleteBroadcast(id) {
-  if (!confirm('Hapus broadcast ini?')) return;
-  const res = await deleteBroadcast(id);
-  if (res.success) { showToast('Berhasil','Broadcast dihapus.','success'); loadAdminBroadcasts(); }
+
+async function deleteKisiConfirm(id, judul) {
+  if (!confirm(`Hapus soal "${judul}"?`)) return;
+  const res = await deleteKisiKisi(id);
+  const mapelId = activeAdminMapelId || q('soal-mapel-select')?.value;
+  if (res.success) { showToast('Dihapus', 'Soal dihapus.', 'warning'); if (mapelId) loadKisiAdmin(mapelId); }
   else showToast('Error', res.error, 'error');
 }
 
-// ── MONITORING ─────────────────────────────────────────────────────────────
-let monitorInterval = null;
-async function loadMonitoring() {
-  if (monitorInterval) clearInterval(monitorInterval);
-  await refreshMonitoring();
-  monitorInterval = setInterval(refreshMonitoring, 30000);
-}
-async function refreshMonitoring() {
-  const wrap = q('monitoring-list');
-  const { data } = await getAllUsers();
-  if (!data) return;
-  const online  = data.filter(u => isOnline(u.last_seen));
-  const offline = data.filter(u => !isOnline(u.last_seen) && u.role !== 'admin').slice(0,20);
-  q('monitor-online-count').textContent = online.length;
-  q('monitor-total-count').textContent  = data.length;
-  const renderUser = u => `
-    <div class="monitor-row">
-      <div class="avatar-wrap" style="flex-shrink:0">
-        <div class="avatar" style="width:34px;height:34px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
-        <span class="presence-dot ${isOnline(u.last_seen)?'online':'offline'}"></span>
-      </div>
-      <div style="flex:1;min-width:0">
-        <div class="u-name">${esc(u.nama_lengkap)}</div><div class="u-email">${esc(u.email)}</div>
-      </div>
-      <div style="text-align:right;font-size:11px;color:var(--dim)">
-        ${isOnline(u.last_seen)?'<span style="color:var(--green);font-weight:600">● Online</span>':(u.last_seen?`Terakhir: ${fmtDate(u.last_seen)}`:'Belum pernah')}
-      </div>
-    </div>`;
-  wrap.innerHTML = `
-    <div class="monitor-section">
-      <div class="monitor-section-title">🟢 Sedang Online (${online.length})</div>
-      ${online.length?online.map(renderUser).join(''):'<div class="td-empty">Tidak ada pengguna online</div>'}
-    </div>
-    <div class="monitor-section" style="margin-top:20px">
-      <div class="monitor-section-title">⚫ Terakhir Aktif</div>
-      ${offline.length?offline.map(renderUser).join(''):'<div class="td-empty">Tidak ada data</div>'}
-    </div>`;
-}
-
-// ── LOGS ───────────────────────────────────────────────────────────────────
-async function loadAdminLogs() {
-  const list = q('logs-list');
-  list.innerHTML = `<div class="td-empty">Memuat log...</div>`;
-  const { data, error } = await getAdminLogs();
-  if (error) { list.innerHTML = `<div class="td-empty" style="color:var(--red)">Gagal memuat log.</div>`; return; }
-  if (!data?.length) { list.innerHTML = `<div class="empty-box">Belum ada log aktivitas.</div>`; return; }
-  list.innerHTML = `<div class="table-wrap"><table>
-    <thead><tr><th>Waktu</th><th>Admin</th><th>Aksi</th><th>Detail</th></tr></thead>
-    <tbody>${data.map(l=>`
-      <tr>
-        <td style="font-size:11px;color:var(--dim);white-space:nowrap">${fmtDate(l.created_at)}</td>
-        <td><div class="u-name">${esc(l.profiles?.nama_lengkap||'System')}</div></td>
-        <td><span class="badge b-admin">${esc(l.action)}</span></td>
-        <td style="font-size:12px;color:var(--muted)">${esc(l.detail||'—')}</td>
-      </tr>`).join('')}
-    </tbody>
-  </table></div>`;
-}
-
-// ── MODAL ──────────────────────────────────────────────────────────────────
-const openModal  = id => q(id)?.classList.add('open');
-const closeModal = id => q(id)?.classList.remove('open');
+// ── MODAL ──────────────────────────────────────────────────────
+const openModal  = id => { const el = q(id); if (el) { el.classList.add('open'); document.body.style.overflow = 'hidden'; } };
+const closeModal = id => { const el = q(id); if (el) { el.classList.remove('open'); document.body.style.overflow = ''; } };
 document.addEventListener('click', e => {
-  if (e.target.classList.contains('modal-bg')) e.target.classList.remove('open');
+  if (e.target.classList.contains('modal-bg')) {
+    e.target.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+});
+
+// ── BOOT ───────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  setRole('siswa');
+  showAppLoading('Memeriksa sesi...');
+
+  // Safety timeout – jika auth tidak merespons dalam 8 detik, tampilkan login
+  const safetyTimeout = setTimeout(() => {
+    hideAppLoading();
+    if (!currentUser) showPage('page-login');
+  }, 8000);
+
+  sb.auth.onAuthStateChange(async (event, session) => {
+    clearTimeout(safetyTimeout);
+
+    if (event === 'SIGNED_OUT' || !session) {
+      currentUser = currentProfile = null;
+      hideAppLoading();
+      showPage('page-login');
+    } else if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+      showAppLoading('Memuat profil...');
+      await initApp(session);
+    }
+  });
 });

@@ -2,25 +2,38 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>KisiKisi 8F</title>
   <meta name="theme-color" content="#060810">
+  <meta name="description" content="Platform kisi-kisi eksklusif Kelas 8F">
+  <!-- Preconnect untuk percepat font loading -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <!-- Supabase dimuat duluan karena dibutuhkan segera -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+<!-- ═══════════════════════════════════════════════════════════
+     LOADING SCREEN — mencegah black screen saat init
+════════════════════════════════════════════════════════════ -->
+<div id="app-loading">
+  <div class="loading-inner">
+    <div class="loading-logo">K</div>
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Memuat aplikasi...</div>
+  </div>
+</div>
+
 <div class="noise"></div>
 <div class="bg-mesh"></div>
 <div id="toast-container"></div>
 
-<!-- LOADING SCREEN (injected by JS) -->
-
 <div class="app">
 
-  <!-- LOGIN PAGE -->
+  <!-- ════════════ LOGIN PAGE ════════════ -->
   <div id="page-login" class="page">
     <div class="auth-wrap">
       <div class="auth-card">
@@ -33,29 +46,32 @@
         </div>
         <div class="tab-row">
           <button id="tab-masuk"  class="tab active" onclick="switchTab('login')">Masuk</button>
-          <button id="tab-daftar" class="tab"        onclick="switchTab('register')">Daftar</button>
+          <button id="tab-daftar" class="tab"         onclick="switchTab('register')">Daftar</button>
         </div>
 
         <form id="login-form" onsubmit="handleLogin(event)">
-          <div class="field"><label>Email</label><input type="email" id="login-email" placeholder="nama@email.com" required></div>
-          <div class="field"><label>Password</label><input type="password" id="login-password" placeholder="Password Anda" required></div>
+          <div class="field"><label>Email</label><input type="email" id="login-email" placeholder="nama@email.com" autocomplete="email" required></div>
+          <div class="field"><label>Password</label><input type="password" id="login-password" placeholder="Password Anda" autocomplete="current-password" required></div>
           <button type="submit" id="btn-login" class="btn btn-primary w-full mt-2">Masuk</button>
         </form>
 
         <form id="register-form" onsubmit="handleRegister(event)" style="display:none">
-          <div class="field"><label>Nama Lengkap</label><input type="text" id="reg-nama" placeholder="Nama lengkap Anda" required></div>
-          <div class="field"><label>Email</label><input type="email" id="reg-email" placeholder="nama@email.com" required></div>
-          <div class="field"><label>Password</label><input type="password" id="reg-password" placeholder="Min. 6 karakter" minlength="6" required></div>
+          <div class="field"><label>Nama Lengkap</label><input type="text" id="reg-nama" placeholder="Nama lengkap Anda" autocomplete="name" required></div>
+          <div class="field"><label>Email</label><input type="email" id="reg-email" placeholder="nama@email.com" autocomplete="email" required></div>
+          <div class="field"><label>Password</label><input type="password" id="reg-password" placeholder="Min. 6 karakter" minlength="6" autocomplete="new-password" required></div>
+
           <div class="role-label">Daftar Sebagai</div>
           <div class="role-selector">
-            <button type="button" id="role-siswa" class="role-btn siswa-active role-active" onclick="setRole('siswa')">🎓 Siswa</button>
+            <button type="button" id="role-siswa" class="role-btn role-active siswa-active" onclick="setRole('siswa')">🎓 Siswa</button>
             <button type="button" id="role-admin" class="role-btn admin-active" onclick="setRole('admin')">⭐ Admin</button>
           </div>
-          <div id="secret-wrap" style="display:none;margin-top:4px;animation:fadeUp .2s ease both">
+
+          <div id="secret-wrap" class="secret-field" style="display:none">
             <div class="field"><label>🔑 Kode Rahasia Admin</label><input type="password" id="reg-secret" placeholder="Masukkan kode rahasia"></div>
           </div>
+
           <button type="submit" id="btn-register" class="btn btn-primary w-full mt-2">Kirim OTP</button>
-          <p class="hint">OTP dikirim ke email Anda · Berlaku 5 menit</p>
+          <p class="hint">OTP dikirim ke email · Berlaku 5 menit</p>
         </form>
 
         <div class="divider"><span>atau</span></div>
@@ -72,7 +88,7 @@
     </div>
   </div>
 
-  <!-- OTP PAGE -->
+  <!-- ════════════ OTP PAGE ════════════ -->
   <div id="page-otp" class="page">
     <div class="auth-wrap">
       <div class="auth-card">
@@ -83,7 +99,7 @@
             <div class="brand-sub">Dikirim ke <span id="otp-email-display" style="color:var(--blue)"></span> &nbsp;·&nbsp; <span id="otp-role-info" style="color:var(--amber);font-weight:700"></span></div>
           </div>
         </div>
-        <p class="hint" style="margin-bottom:16px;text-align:center">Buka email Anda dan masukkan <strong>8 digit kode OTP</strong> yang dikirim Supabase.</p>
+        <p class="hint" style="margin-bottom:16px;text-align:center">Masukkan <strong>8 digit kode OTP</strong> yang dikirim ke email Anda.</p>
         <div class="otp-row">
           <input class="otp-box" id="otp-0" maxlength="1" inputmode="numeric" oninput="otpInput(event,0)" onkeydown="otpKey(event,0)">
           <input class="otp-box" id="otp-1" maxlength="1" inputmode="numeric" oninput="otpInput(event,1)" onkeydown="otpKey(event,1)">
@@ -102,7 +118,7 @@
     </div>
   </div>
 
-  <!-- PENDING PAGE -->
+  <!-- ════════════ PENDING PAGE ════════════ -->
   <div id="page-pending" class="page">
     <div class="center-page">
       <div class="status-card">
@@ -116,38 +132,25 @@
     </div>
   </div>
 
-  <!-- REJECTED PAGE -->
+  <!-- ════════════ REJECTED PAGE ════════════ -->
   <div id="page-rejected" class="page">
     <div class="center-page">
       <div class="status-card">
         <div class="status-icon" style="color:var(--red)">✕</div>
         <h2 style="color:var(--red)">Akses Ditolak</h2>
-        <p>Pendaftaran Anda ditolak oleh admin. Hubungi admin untuk info lebih lanjut.</p>
+        <p>Pendaftaran Anda ditolak. Hubungi admin untuk info lebih lanjut.</p>
         <button class="btn btn-ghost w-full" onclick="logoutUser()">Kembali ke Login</button>
       </div>
     </div>
   </div>
 
-  <!-- BANNED PAGE -->
-  <div id="page-banned" class="page">
-    <div class="center-page">
-      <div class="status-card">
-        <div class="status-icon" style="color:var(--red)">🚫</div>
-        <h2 style="color:var(--red)">Akun Diblokir</h2>
-        <p>Akun Anda telah diblokir oleh admin karena melanggar aturan platform.</p>
-        <div id="banned-info" style="margin-bottom:20px"></div>
-        <button class="btn btn-ghost w-full" onclick="logoutUser()">Kembali ke Login</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- DASHBOARD -->
+  <!-- ════════════ DASHBOARD ════════════ -->
   <div id="page-dashboard" class="page">
     <nav class="nav">
       <div class="nav-brand"><span class="brand-mark sm">K</span> KisiKisi 8F</div>
       <div class="nav-user" onclick="logoutUser()">
         <div class="avatar" id="dash-avatar">?</div>
-        <span id="dash-name">—</span>
+        <span id="dash-name" class="nav-username">—</span>
         <span class="nav-exit">↗</span>
       </div>
     </nav>
@@ -170,45 +173,47 @@
     </div>
   </div>
 
-  <!-- KISI-KISI PAGE -->
+  <!-- ════════════ KISI-KISI PAGE ════════════ -->
   <div id="page-kisi" class="page">
     <nav class="nav">
       <div class="nav-brand"><span class="brand-mark sm">K</span> KisiKisi 8F</div>
-      <div class="nav-user" onclick="goBack()"><span class="nav-exit">←</span> Kembali</div>
+      <div class="nav-user" onclick="goBack()"><span class="nav-exit">←</span> <span class="nav-username">Kembali</span></div>
     </nav>
     <div class="kisi-hero" id="kisi-hero"></div>
     <div class="content" id="kisi-list"></div>
   </div>
 
-  <!-- ADMIN PAGE -->
+  <!-- ════════════ ADMIN PAGE ════════════ -->
   <div id="page-admin" class="page">
     <nav class="nav">
-      <div class="nav-brand"><span class="brand-mark sm" style="background:var(--amber)">★</span> Admin Panel</div>
+      <div class="nav-brand"><span class="brand-mark sm" style="background:var(--amber)">★</span> <span class="nav-username">Admin Panel</span></div>
       <div class="nav-right">
         <span class="live-dot">Realtime</span>
         <div class="nav-user" onclick="logoutUser()">
           <div class="avatar" id="admin-avatar">A</div>
-          <span id="admin-name">Admin</span>
+          <span id="admin-name" class="nav-username">Admin</span>
           <span class="nav-exit">↗</span>
         </div>
       </div>
     </nav>
 
-    <!-- Mobile sidebar toggle -->
-    <div class="sidebar-toggle" onclick="this.classList.toggle('open');document.querySelector('.sidebar').classList.toggle('open')">
-      <span></span><span></span><span></span>
+    <!-- Mobile tab bar -->
+    <div class="admin-tabs">
+      <button class="admin-tab active" id="snav-users" onclick="adminSection('users')">👥 Pengguna</button>
+      <button class="admin-tab" id="snav-mapel"  onclick="adminSection('mapel')">📚 Mapel</button>
+      <button class="admin-tab" id="nav-soal"   onclick="adminSection('soal')">📝 Soal</button>
+      <button class="admin-tab" id="snav-stats"  onclick="adminSection('stats')">📊 Statistik</button>
     </div>
 
     <div class="admin-layout">
-      <aside class="sidebar" id="admin-sidebar">
-        <div class="sidebar-label">Menu Admin</div>
-        <div class="sidebar-item active" id="nav-users"      onclick="adminSection('users');closeSidebar()">👥 Pengguna</div>
-        <div class="sidebar-item"        id="nav-mapel"      onclick="adminSection('mapel');closeSidebar()">📚 Mapel</div>
-        <div class="sidebar-item"        id="nav-soal"       onclick="adminSection('soal');closeSidebar()">📝 Soal & Materi</div>
-        <div class="sidebar-item"        id="nav-broadcast"  onclick="adminSection('broadcast');closeSidebar()">📢 Broadcast</div>
-        <div class="sidebar-item"        id="nav-monitoring" onclick="adminSection('monitoring');closeSidebar()">📡 Monitoring</div>
-        <div class="sidebar-item"        id="nav-logs"       onclick="adminSection('logs');closeSidebar()">📋 Log Aktivitas</div>
+      <aside class="sidebar">
+        <div class="sidebar-label">Menu</div>
+        <div class="sidebar-item active" id="snav-users" onclick="adminSection('users')">👥 Pengguna</div>
+        <div class="sidebar-item" id="snav-mapel"  onclick="adminSection('mapel')">📚 Mapel</div>
+        <div class="sidebar-item" id="snav-soal"   onclick="adminSection('soal')">📝 Soal</div>
+        <div class="sidebar-item" id="snav-stats"  onclick="adminSection('stats')">📊 Statistik</div>
       </aside>
+
       <main class="admin-main">
 
         <!-- USERS -->
@@ -219,89 +224,68 @@
             <div class="stat"><div class="stat-label">Pending</div><div class="stat-val amber" id="a-pending">0</div></div>
             <div class="stat"><div class="stat-label">Approved</div><div class="stat-val green" id="a-approved">0</div></div>
             <div class="stat"><div class="stat-label">Rejected</div><div class="stat-val red" id="a-rejected">0</div></div>
-            <div class="stat"><div class="stat-label">Online</div><div class="stat-val" style="color:var(--green)" id="a-online">0</div></div>
           </div>
           <div class="search-box">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input type="text" placeholder="Cari nama atau email..." oninput="searchUsers(this.value)">
+            <input type="text" placeholder="Cari nama, email, atau status..." oninput="searchUsers(this.value)">
           </div>
-          <div class="table-wrap" style="overflow-x:auto">
-            <table id="users-table" style="min-width:700px">
-              <thead><tr><th>Pengguna</th><th>Kelas</th><th>Role</th><th>Status</th><th>Online</th><th>Bergabung</th><th>Aksi</th></tr></thead>
-              <tbody id="users-tbody"><tr><td colspan="7" class="td-empty">Memuat data...</td></tr></tbody>
+          <div class="table-wrap">
+            <table id="users-table">
+              <thead><tr><th>Pengguna</th><th>Kelas</th><th>Role</th><th>Status</th><th class="hide-sm">Bergabung</th><th>Aksi</th></tr></thead>
+              <tbody id="users-tbody"><tr><td colspan="6" class="td-empty">Memuat data...</td></tr></tbody>
             </table>
           </div>
         </div>
 
         <!-- MAPEL -->
         <div class="admin-sec" id="admin-mapel" style="display:none">
-          <div class="sec-title-row">
-            <h2 class="sec-title">Manajemen Mapel</h2>
-            <button class="btn btn-primary btn-sm" onclick="openAddMapelModal()">+ Tambah Mapel</button>
+          <div class="sec-header-row">
+            <div>
+              <h2 class="sec-title">Manajemen Mapel</h2>
+              <p class="sec-desc">Tambah, edit, atau hapus mata pelajaran. Toggle untuk mengunci/membuka akses.</p>
+            </div>
+            <button class="btn btn-primary" onclick="openAddMapel()">＋ Tambah Mapel</button>
           </div>
-          <p class="sec-desc">Kelola mata pelajaran, toggle buka/kunci akses kisi-kisi.</p>
           <div class="mapel-grid" id="admin-mapel-grid"></div>
         </div>
 
-        <!-- SOAL & MATERI -->
+        <!-- SOAL / KISI-KISI -->
         <div class="admin-sec" id="admin-soal" style="display:none">
-          <div class="sec-title-row">
-            <h2 class="sec-title">Soal & Materi</h2>
-            <button class="btn btn-primary btn-sm" onclick="openAddSoalModal()">+ Tambah Soal</button>
+          <div class="sec-header-row">
+            <div>
+              <h2 class="sec-title">Manajemen Soal</h2>
+              <p class="sec-desc">Tambah, edit, atau hapus soal dan kisi-kisi per mata pelajaran.</p>
+            </div>
+            <button class="btn btn-primary" onclick="openAddKisi()">＋ Tambah Soal</button>
           </div>
-          <p class="sec-desc">Kelola konten kisi-kisi per mata pelajaran. Mendukung Pilihan Ganda, Essay, dan Materi.</p>
-          <div class="field" style="max-width:320px;margin-bottom:20px">
+          <div class="field" style="margin-bottom:20px">
             <label>Pilih Mata Pelajaran</label>
-            <select id="soal-mapel-select" onchange="onSoalMapelChange(this.value)" class="soal-select"></select>
+            <select id="soal-mapel-select" onchange="onSoalMapelChange()">
+              <option value="">-- Pilih Mata Pelajaran --</option>
+            </select>
           </div>
-          <div id="soal-list"></div>
+          <div id="kisi-admin-list">
+            <div class="empty-hint">Pilih mata pelajaran di atas untuk melihat soal.</div>
+          </div>
         </div>
 
-        <!-- BROADCAST -->
-        <div class="admin-sec" id="admin-broadcast" style="display:none">
-          <h2 class="sec-title">📢 Broadcast Pesan</h2>
-          <p class="sec-desc">Kirim pesan ke semua pengguna aktif. Pesan muncul sebagai pop-up dan tidak berulang jika sudah ditutup.</p>
-          <div class="bc-form-card">
-            <div class="field"><label>Judul Pesan</label><input type="text" id="bc-form-title" placeholder="Judul broadcast..."></div>
-            <div class="field"><label>Isi Pesan (mendukung Markdown)</label><textarea id="bc-form-body" placeholder="Tulis pesan di sini... Mendukung **bold**, *italic*, dll." rows="5"></textarea></div>
-            <div class="field"><label>Jadwal Tampil (opsional)</label><input type="datetime-local" id="bc-form-schedule"></div>
-            <button id="btn-send-broadcast" class="btn btn-primary" onclick="sendBroadcast()">📢 Kirim Broadcast</button>
+        <!-- STATS -->
+        <div class="admin-sec" id="admin-stats" style="display:none">
+          <h2 class="sec-title">Statistik</h2>
+          <div class="stats-row">
+            <div class="stat"><div class="stat-label">Daftar Hari Ini</div><div class="stat-val" id="stat-today">—</div></div>
+            <div class="stat"><div class="stat-label">Kelas Aktif</div><div class="stat-val blue">8F</div></div>
           </div>
-          <h3 style="font-size:14px;font-weight:700;margin:24px 0 12px">Broadcast Aktif</h3>
-          <div id="broadcast-list"></div>
-        </div>
-
-        <!-- MONITORING -->
-        <div class="admin-sec" id="admin-monitoring" style="display:none">
-          <h2 class="sec-title">📡 Monitoring Pengguna</h2>
-          <p class="sec-desc">Pantau pengguna yang sedang aktif secara real-time. Data diperbarui setiap 30 detik.</p>
-          <div class="stats-row" style="margin-bottom:20px">
-            <div class="stat">
-              <div class="stat-label">Sedang Online</div>
-              <div class="stat-val" style="color:var(--green)" id="monitor-online-count">—</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label">Total Pengguna</div>
-              <div class="stat-val" id="monitor-total-count">—</div>
-            </div>
-          </div>
-          <div id="monitoring-list"></div>
-        </div>
-
-        <!-- LOGS -->
-        <div class="admin-sec" id="admin-logs" style="display:none">
-          <h2 class="sec-title">📋 Log Aktivitas Admin</h2>
-          <p class="sec-desc">Riwayat tindakan admin: approve, reject, ban, dan perubahan lainnya.</p>
-          <div id="logs-list"></div>
+          <div class="empty-box">📈 Grafik analitik akan hadir segera.</div>
         </div>
 
       </main>
     </div>
   </div>
 
-</div>
+</div><!-- end .app -->
 
-<!-- DISCLAIMER MODAL -->
+<!-- ════════════ DISCLAIMER MODAL ════════════ -->
 <div class="modal-bg" id="modal-disclaimer">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-disclaimer')">✕</button>
@@ -316,55 +300,18 @@
   </div>
 </div>
 
-<!-- BROADCAST MODAL -->
-<div class="modal-bg" id="modal-broadcast">
-  <div class="modal">
-    <div class="bc-modal-badge">📢 Pemberitahuan</div>
-    <h3 class="modal-title" id="bc-title" style="margin-top:8px"></h3>
-    <div class="modal-body" id="bc-body"></div>
-    <div style="font-size:11px;color:var(--dim);margin-bottom:16px" id="bc-time"></div>
-    <button class="btn btn-primary w-full" id="btn-bc-close">Mengerti & Tutup</button>
-  </div>
-</div>
-
-<!-- BAN MODAL -->
-<div class="modal-bg" id="modal-ban">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal('modal-ban')">✕</button>
-    <span class="modal-icon">🚫</span>
-    <h3 class="modal-title">Ban Pengguna</h3>
-    <p class="modal-body">Anda akan memblokir akses: <strong id="ban-target-name"></strong></p>
-    <div class="field">
-      <label>Tipe Ban</label>
-      <select id="ban-type-select">
-        <option value="temp">Sementara (24 jam)</option>
-        <option value="permanent">Permanen</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Alasan Ban *</label>
-      <input type="text" id="ban-reason-input" placeholder="Jelaskan alasan pemblokiran...">
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-ban')">Batal</button>
-      <button class="btn btn-danger" id="btn-ban-confirm" onclick="confirmBan()">🚫 Konfirmasi Ban</button>
-    </div>
-  </div>
-</div>
-
-<!-- MAPEL MODAL -->
+<!-- ════════════ MAPEL MODAL (Add/Edit) ════════════ -->
 <div class="modal-bg" id="modal-mapel">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-mapel')">✕</button>
-    <span class="modal-icon">📚</span>
     <h3 class="modal-title" id="mapel-modal-title">Tambah Mata Pelajaran</h3>
-    <input type="hidden" id="mapel-form-id">
-    <div class="field"><label>Nama Mapel *</label><input type="text" id="mapel-form-nama" placeholder="Contoh: Matematika"></div>
-    <div class="field"><label>Ikon (emoji)</label><input type="text" id="mapel-form-icon" placeholder="📚" maxlength="4"></div>
-    <div style="display:flex;gap:12px">
-      <div class="field" style="flex:1"><label>Warna Dari</label><input type="color" id="mapel-form-color-from" value="#4f8ef7" style="height:42px;width:100%;padding:4px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer"></div>
-      <div class="field" style="flex:1"><label>Warna Ke</label><input type="color" id="mapel-form-color-to" value="#9b7ef8" style="height:42px;width:100%;padding:4px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer"></div>
+    <div class="field"><label>Nama Mata Pelajaran</label><input type="text" id="mapel-form-nama" placeholder="Contoh: Matematika"></div>
+    <div class="field"><label>Icon (emoji)</label><input type="text" id="mapel-form-icon" placeholder="📚" maxlength="4"></div>
+    <div class="form-row-2">
+      <div class="field"><label>Warna Mulai</label><input type="color" id="mapel-form-from" value="#4f8ef7"></div>
+      <div class="field"><label>Warna Akhir</label><input type="color" id="mapel-form-to" value="#9b7ef8"></div>
     </div>
+    <div class="field"><label>Urutan (angka)</label><input type="number" id="mapel-form-urutan" placeholder="0" min="0"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-mapel')">Batal</button>
       <button class="btn btn-primary" id="btn-save-mapel" onclick="saveMapel()">Simpan</button>
@@ -372,48 +319,35 @@
   </div>
 </div>
 
-<!-- SOAL MODAL -->
-<div class="modal-bg" id="modal-soal">
-  <div class="modal modal-wide">
-    <button class="modal-close" onclick="closeModal('modal-soal')">✕</button>
-    <span class="modal-icon">📝</span>
-    <h3 class="modal-title" id="soal-modal-title">Tambah Soal</h3>
-    <input type="hidden" id="soal-form-id">
-    <div class="field"><label>Judul / Topik *</label><input type="text" id="soal-form-judul" placeholder="Contoh: Aljabar & Persamaan Linear"></div>
-    <div class="field">
-      <label>Tipe Konten</label>
-      <select id="soal-form-tipe">
-        <option value="materi">📘 Materi</option>
-        <option value="soal">📝 Soal (Pilihan Ganda / Essay)</option>
-        <option value="catatan">📌 Catatan</option>
-      </select>
+<!-- ════════════ KISI-KISI MODAL (Add/Edit) ════════════ -->
+<div class="modal-bg" id="modal-kisi">
+  <div class="modal modal-lg">
+    <button class="modal-close" onclick="closeModal('modal-kisi')">✕</button>
+    <h3 class="modal-title" id="kisi-modal-title">Tambah Soal / Kisi-kisi</h3>
+    <div class="field"><label>Judul</label><input type="text" id="kisi-form-judul" placeholder="Judul soal atau materi"></div>
+    <div class="form-row-2">
+      <div class="field">
+        <label>Tipe</label>
+        <select id="kisi-form-tipe">
+          <option value="materi">📖 Materi</option>
+          <option value="soal">❓ Soal</option>
+          <option value="catatan">📌 Catatan</option>
+        </select>
+      </div>
+      <div class="field"><label>Urutan</label><input type="number" id="kisi-form-urutan" placeholder="0" min="0"></div>
     </div>
     <div class="field">
-      <label>Konten (Mendukung Markdown) *</label>
-      <textarea id="soal-form-konten" rows="10" placeholder="Tulis konten di sini...
-Mendukung:
-**bold**, *italic*, `kode`
-## Heading
-- List item
-> Kutipan
-| Tabel | Header |"></textarea>
+      <label>Konten (Mendukung Markdown)</label>
+      <textarea id="kisi-form-konten" placeholder="Tulis konten soal/materi di sini...&#10;&#10;Gunakan **bold**, *italic*, ## Judul, - list, dll." rows="10"></textarea>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-soal')">Batal</button>
-      <button class="btn btn-primary" id="btn-save-soal" onclick="saveSoal()">Simpan</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-kisi')">Batal</button>
+      <button class="btn btn-primary" id="btn-save-kisi" onclick="saveKisi()">Simpan</button>
     </div>
   </div>
 </div>
 
 <script src="supabase.js"></script>
 <script src="app.js"></script>
-<script>
-function closeSidebar() {
-  const sb = document.querySelector('.sidebar');
-  const toggle = document.querySelector('.sidebar-toggle');
-  if (sb) sb.classList.remove('open');
-  if (toggle) toggle.classList.remove('open');
-}
-</script>
 </body>
 </html>
