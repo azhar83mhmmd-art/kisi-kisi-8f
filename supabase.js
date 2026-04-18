@@ -1,9 +1,7 @@
 // ── CONFIG ─────────────────────────────────────────────────
-const SUPABASE_URL      = 'https://eozszgqcjrtcddzhhrla.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_i03TX3TX6zL7_dpSK6IF4w_T87lfQAP';
+const SUPABASE_URL      = 'https://swsdbhjfjxnioaqakwuy.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_0dSKEfF6GANvpFE0JGVeVQ_w64RrAjF';
 const ADMIN_SECRET_CODE = 'qwerty';
-// ⚠️ PENTING: Set OTP length = 8 di Supabase Dashboard
-//    Authentication → Email Templates → OTP Length → 8
 
 // ── INIT ───────────────────────────────────────────────────
 const { createClient } = supabase;
@@ -12,71 +10,52 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // ── OTP PENDING STATE ──────────────────────────────────────
 let pendingOTPData = null;
 
-// ── REGISTER — kirim OTP via Supabase built-in ─────────────
-// role: 'siswa' | 'admin'
+// ── REGISTER ───────────────────────────────────────────────
 async function initiateRegister(nama, email, password, kelas, role) {
-  // Cek email sudah terdaftar
-  const { data: ex } = await sb.from('profiles')
-    .select('email').eq('email', email).maybeSingle();
-  if (ex) return { success: false, error: 'Email sudah terdaftar.' };
-
-  // Simpan data pending
+  // Run email-exists check and OTP send in parallel — saves ~500ms round-trip
+  const [existsRes, otpRes] = await Promise.all([
+    sb.from('profiles').select('email').eq('email', email).maybeSingle(),
+    sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } })
+  ]);
+  if (existsRes.data) return { success: false, error: 'Email sudah terdaftar.' };
+  if (otpRes.error) return { success: false, error: 'Gagal kirim OTP: ' + otpRes.error.message };
   pendingOTPData = { nama, email, password, kelas, role };
-
-  // Kirim OTP 6-digit via Supabase (magic link / OTP email)
-  const { error } = await sb.auth.signInWithOtp({
-    email,
-    options: { shouldCreateUser: true }
-  });
-
-  if (error) return { success: false, error: 'Gagal kirim OTP: ' + error.message };
   return { success: true };
 }
 
-// ── VERIFY OTP & SELESAIKAN REGISTRASI ────────────────────
 async function verifyOTPAndRegister(inputOTP) {
   if (!pendingOTPData) return { success: false, error: 'Sesi habis. Daftar ulang.' };
 
   const { nama, email, password, kelas, role } = pendingOTPData;
 
-  // Verifikasi OTP ke Supabase
   const { data, error } = await sb.auth.verifyOtp({
-    email,
-    token: inputOTP,
-    type: 'email'
+    email, token: inputOTP, type: 'email'
   });
   if (error) return { success: false, error: 'OTP salah atau kadaluarsa.' };
 
   const user = data.user;
-
-  // Set password akun
-  await sb.auth.updateUser({ password });
-
-  // Admin → langsung approved, siswa → pending
   const status = role === 'admin' ? 'approved' : 'pending';
+  const now = new Date().toISOString();
 
-  // Upsert profil
-  const { data: existingP } = await sb.from('profiles')
-    .select('id').eq('user_id', user.id).maybeSingle();
+  // Run password update + profile upsert in parallel — saves ~1 extra round-trip
+  const [, upsertResult] = await Promise.all([
+    sb.auth.updateUser({ password }),
+    sb.from('profiles').upsert(
+      { user_id: user.id, nama_lengkap: nama, email, kelas, role, status, updated_at: now },
+      { onConflict: 'user_id', ignoreDuplicates: false }
+    ).select().single()
+  ]);
 
-  if (existingP) {
-    await sb.from('profiles').update({
-      nama_lengkap: nama, kelas, role, status,
-      updated_at: new Date().toISOString()
-    }).eq('user_id', user.id);
-  } else {
-    const { error: pe } = await sb.from('profiles').insert({
-      user_id: user.id, nama_lengkap: nama, email, kelas, role, status
-    });
-    if (pe) return { success: false, error: 'Gagal buat profil: ' + pe.message };
+  if (upsertResult.error) {
+    return { success: false, error: 'Gagal buat profil: ' + upsertResult.error.message };
   }
 
   pendingOTPData = null;
-  const profile = await getProfile(user.id);
+  // Use the upserted row directly — no extra getProfile() round-trip needed
+  const profile = upsertResult.data;
   return { success: true, user, profile };
 }
 
-// ── KIRIM ULANG OTP ────────────────────────────────────────
 async function resendOTPCode() {
   if (!pendingOTPData) return { success: false, error: 'Sesi habis.' };
   const { error } = await sb.auth.signInWithOtp({
@@ -94,7 +73,7 @@ async function loginUser(email, password) {
     const msg = error.message.includes('Invalid')
       ? 'Email atau password salah.'
       : error.message.includes('confirm')
-      ? 'Email belum dikonfirmasi. Cek inbox Anda.'
+      ? 'Email belum dikonfirmasi.'
       : 'Login gagal.';
     return { success: false, error: msg };
   }
@@ -106,7 +85,6 @@ async function loginUser(email, password) {
   return { success: true, user: data.user, profile };
 }
 
-// ── GOOGLE OAUTH ──────────────────────────────────────────
 async function loginWithGoogle() {
   const { error } = await sb.auth.signInWithOAuth({
     provider: 'google',
@@ -115,8 +93,13 @@ async function loginWithGoogle() {
   if (error) showToast('Error', error.message, 'error');
 }
 
-// ── LOGOUT ────────────────────────────────────────────────
 async function logoutUser() {
+  stopPresence();
+  if (currentUser) {
+    // fire-and-forget — don't await, show UI instantly
+    sb.from('profiles').update({ last_seen: new Date().toISOString(), is_online: false })
+      .eq('user_id', currentUser.id).catch(() => {});
+  }
   await sb.auth.signOut();
   currentUser = currentProfile = null;
   showPage('page-login');
@@ -142,6 +125,29 @@ async function ensureProfile(user) {
   return data || null;
 }
 
+// ── USER PRESENCE (heartbeat) ─────────────────────────────
+let presenceInterval = null;
+let _presenceListenerAdded = false;
+function startPresence() {
+  if (!currentUser || presenceInterval) return;
+  const update = () => sb.from('profiles')
+    .update({ last_seen: new Date().toISOString(), is_online: true })
+    .eq('user_id', currentUser.id).catch(() => {});
+  update(); // fire-and-forget, no await
+  presenceInterval = setInterval(update, 30000);
+  if (!_presenceListenerAdded) {
+    _presenceListenerAdded = true;
+    window.addEventListener('beforeunload', () => {
+      sb.from('profiles').update({ is_online: false })
+        .eq('user_id', currentUser.id).catch(() => {});
+    });
+  }
+}
+
+function stopPresence() {
+  if (presenceInterval) { clearInterval(presenceInterval); presenceInterval = null; }
+}
+
 // ── ADMIN CRUD ────────────────────────────────────────────
 const getAllUsers  = () => sb.from('profiles').select('*').order('created_at', { ascending: false });
 const getMapel    = () => sb.from('mapel').select('*').order('urutan');
@@ -150,6 +156,8 @@ const getKisiKisi = (id) => sb.from('kisi_kisi').select('*').eq('mapel_id', id).
 async function updateUserStatus(id, status) {
   const { error } = await sb.from('profiles')
     .update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+  // Log action
+  if (!error) await logAdminAction(`status_update:${status}`, id);
   return { success: !error, error: error?.message };
 }
 
@@ -158,10 +166,116 @@ async function toggleMapelLock(id, locked) {
   return { success: !error, error: error?.message };
 }
 
+// ── MAPEL CRUD ────────────────────────────────────────────
+async function createMapel(data) {
+  const { data: res, error } = await sb.from('mapel').insert(data).select().single();
+  return { success: !error, data: res, error: error?.message };
+}
+
+async function updateMapel(id, data) {
+  const { error } = await sb.from('mapel').update(data).eq('id', id);
+  return { success: !error, error: error?.message };
+}
+
+async function deleteMapel(id) {
+  const { error } = await sb.from('mapel').delete().eq('id', id);
+  return { success: !error, error: error?.message };
+}
+
+// ── KISI-KISI (SOAL) CRUD ─────────────────────────────────
+async function createKisiKisi(data) {
+  const { data: res, error } = await sb.from('kisi_kisi').insert(data).select().single();
+  return { success: !error, data: res, error: error?.message };
+}
+
+async function updateKisiKisi(id, data) {
+  const { error } = await sb.from('kisi_kisi')
+    .update({ ...data, updated_at: new Date().toISOString() }).eq('id', id);
+  return { success: !error, error: error?.message };
+}
+
+async function deleteKisiKisi(id) {
+  const { error } = await sb.from('kisi_kisi').delete().eq('id', id);
+  return { success: !error, error: error?.message };
+}
+
+// ── BAN / BLOCK ───────────────────────────────────────────
+async function banUser(id, type, reason) {
+  // type: 'temp' | 'permanent'
+  const bannedUntil = type === 'temp'
+    ? new Date(Date.now() + 24 * 3600 * 1000).toISOString() // 24 jam
+    : null;
+  const { error } = await sb.from('profiles').update({
+    status: 'rejected',
+    ban_type: type,
+    ban_until: bannedUntil,
+    ban_reason: reason,
+    updated_at: new Date().toISOString()
+  }).eq('id', id);
+  if (!error) await logAdminAction(`ban:${type}`, id, reason);
+  return { success: !error, error: error?.message };
+}
+
+async function unbanUser(id) {
+  const { error } = await sb.from('profiles').update({
+    status: 'approved',
+    ban_type: null,
+    ban_until: null,
+    ban_reason: null,
+    updated_at: new Date().toISOString()
+  }).eq('id', id);
+  if (!error) await logAdminAction('unban', id);
+  return { success: !error, error: error?.message };
+}
+
+// ── ACTIVITY LOG ──────────────────────────────────────────
+async function logAdminAction(action, targetId, detail) {
+  if (!currentUser) return;
+  await sb.from('activity_log').insert({
+    user_id: currentUser.id,
+    action,
+    detail: detail ? `${targetId}: ${detail}` : targetId,
+  }).catch(() => {});
+}
+
+async function getAdminLogs() {
+  return await sb.from('activity_log')
+    .select('*, profiles!activity_log_user_id_fkey(nama_lengkap, email)')
+    .order('created_at', { ascending: false })
+    .limit(100);
+}
+
+// ── BROADCAST ────────────────────────────────────────────
+async function getBroadcasts() {
+  return await sb.from('broadcasts').select('*')
+    .eq('active', true).order('created_at', { ascending: false });
+}
+
+async function createBroadcast(title, body, scheduleAt) {
+  const payload = {
+    title, body, active: true,
+    created_by: currentUser?.id,
+  };
+  if (scheduleAt) payload.scheduled_at = scheduleAt;
+  const { data, error } = await sb.from('broadcasts').insert(payload).select().single();
+  return { success: !error, data, error: error?.message };
+}
+
+async function deleteBroadcast(id) {
+  const { error } = await sb.from('broadcasts')
+    .update({ active: false }).eq('id', id);
+  return { success: !error, error: error?.message };
+}
+
 // ── REALTIME ──────────────────────────────────────────────
 const subscribeToProfiles = (cb) => sb.channel('profiles-ch')
   .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, cb)
   .subscribe();
+
 const subscribeToMapel = (cb) => sb.channel('mapel-ch')
   .on('postgres_changes', { event: '*', schema: 'public', table: 'mapel' }, cb)
+  .subscribe();
+
+const subscribeToBroadcasts = (cb) => sb.channel('broadcast-ch')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, cb)
   .subscribe();

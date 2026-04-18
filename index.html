@@ -9,27 +9,14 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="style.css">
-  <style>
-    .role-selector { display:flex; gap:8px; margin-bottom:18px; }
-    .role-btn {
-      flex:1; padding:10px 8px; border-radius:var(--r);
-      border:1.5px solid var(--border-m); background:var(--card);
-      color:var(--muted); font-size:13px; font-weight:600;
-      cursor:pointer; transition:var(--t);
-      display:flex; align-items:center; justify-content:center; gap:6px;
-    }
-    .role-btn:hover { border-color:var(--blue); color:var(--text); }
-    .role-btn.role-active.siswa-active { border-color:var(--blue); background:var(--blue-g); color:var(--blue); }
-    .role-btn.role-active.admin-active { border-color:var(--amber); background:rgba(245,166,35,.12); color:var(--amber); }
-    .secret-field { margin-top:4px; animation:fadeUp .2s ease both; }
-    .role-label { font-size:11px; font-weight:600; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
-  </style>
 </head>
 <body>
 
 <div class="noise"></div>
 <div class="bg-mesh"></div>
 <div id="toast-container"></div>
+
+<!-- LOADING SCREEN (injected by JS) -->
 
 <div class="app">
 
@@ -46,34 +33,29 @@
         </div>
         <div class="tab-row">
           <button id="tab-masuk"  class="tab active" onclick="switchTab('login')">Masuk</button>
-          <button id="tab-daftar" class="tab"         onclick="switchTab('register')">Daftar</button>
+          <button id="tab-daftar" class="tab"        onclick="switchTab('register')">Daftar</button>
         </div>
 
-        <!-- Login -->
         <form id="login-form" onsubmit="handleLogin(event)">
           <div class="field"><label>Email</label><input type="email" id="login-email" placeholder="nama@email.com" required></div>
           <div class="field"><label>Password</label><input type="password" id="login-password" placeholder="Password Anda" required></div>
           <button type="submit" id="btn-login" class="btn btn-primary w-full mt-2">Masuk</button>
         </form>
 
-        <!-- Register -->
         <form id="register-form" onsubmit="handleRegister(event)" style="display:none">
           <div class="field"><label>Nama Lengkap</label><input type="text" id="reg-nama" placeholder="Nama lengkap Anda" required></div>
           <div class="field"><label>Email</label><input type="email" id="reg-email" placeholder="nama@email.com" required></div>
           <div class="field"><label>Password</label><input type="password" id="reg-password" placeholder="Min. 6 karakter" minlength="6" required></div>
-
           <div class="role-label">Daftar Sebagai</div>
           <div class="role-selector">
             <button type="button" id="role-siswa" class="role-btn siswa-active role-active" onclick="setRole('siswa')">🎓 Siswa</button>
             <button type="button" id="role-admin" class="role-btn admin-active" onclick="setRole('admin')">⭐ Admin</button>
           </div>
-
-          <div id="secret-wrap" class="secret-field" style="display:none">
+          <div id="secret-wrap" style="display:none;margin-top:4px;animation:fadeUp .2s ease both">
             <div class="field"><label>🔑 Kode Rahasia Admin</label><input type="password" id="reg-secret" placeholder="Masukkan kode rahasia"></div>
           </div>
-
           <button type="submit" id="btn-register" class="btn btn-primary w-full mt-2">Kirim OTP</button>
-          <p class="hint">OTP dikirim Supabase ke email Anda · Berlaku 5 menit</p>
+          <p class="hint">OTP dikirim ke email Anda · Berlaku 5 menit</p>
         </form>
 
         <div class="divider"><span>atau</span></div>
@@ -146,6 +128,19 @@
     </div>
   </div>
 
+  <!-- BANNED PAGE -->
+  <div id="page-banned" class="page">
+    <div class="center-page">
+      <div class="status-card">
+        <div class="status-icon" style="color:var(--red)">🚫</div>
+        <h2 style="color:var(--red)">Akun Diblokir</h2>
+        <p>Akun Anda telah diblokir oleh admin karena melanggar aturan platform.</p>
+        <div id="banned-info" style="margin-bottom:20px"></div>
+        <button class="btn btn-ghost w-full" onclick="logoutUser()">Kembali ke Login</button>
+      </div>
+    </div>
+  </div>
+
   <!-- DASHBOARD -->
   <div id="page-dashboard" class="page">
     <nav class="nav">
@@ -198,14 +193,25 @@
         </div>
       </div>
     </nav>
+
+    <!-- Mobile sidebar toggle -->
+    <div class="sidebar-toggle" onclick="this.classList.toggle('open');document.querySelector('.sidebar').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </div>
+
     <div class="admin-layout">
-      <aside class="sidebar">
-        <div class="sidebar-label">Menu</div>
-        <div class="sidebar-item active" id="nav-users" onclick="adminSection('users')">👥 Pengguna</div>
-        <div class="sidebar-item" id="nav-mapel"  onclick="adminSection('mapel')">📚 Mapel</div>
-        <div class="sidebar-item" id="nav-stats"  onclick="adminSection('stats')">📊 Statistik</div>
+      <aside class="sidebar" id="admin-sidebar">
+        <div class="sidebar-label">Menu Admin</div>
+        <div class="sidebar-item active" id="nav-users"      onclick="adminSection('users');closeSidebar()">👥 Pengguna</div>
+        <div class="sidebar-item"        id="nav-mapel"      onclick="adminSection('mapel');closeSidebar()">📚 Mapel</div>
+        <div class="sidebar-item"        id="nav-soal"       onclick="adminSection('soal');closeSidebar()">📝 Soal & Materi</div>
+        <div class="sidebar-item"        id="nav-broadcast"  onclick="adminSection('broadcast');closeSidebar()">📢 Broadcast</div>
+        <div class="sidebar-item"        id="nav-monitoring" onclick="adminSection('monitoring');closeSidebar()">📡 Monitoring</div>
+        <div class="sidebar-item"        id="nav-logs"       onclick="adminSection('logs');closeSidebar()">📋 Log Aktivitas</div>
       </aside>
       <main class="admin-main">
+
+        <!-- USERS -->
         <div class="admin-sec" id="admin-users">
           <h2 class="sec-title">Manajemen Pengguna</h2>
           <div class="stats-row">
@@ -213,31 +219,82 @@
             <div class="stat"><div class="stat-label">Pending</div><div class="stat-val amber" id="a-pending">0</div></div>
             <div class="stat"><div class="stat-label">Approved</div><div class="stat-val green" id="a-approved">0</div></div>
             <div class="stat"><div class="stat-label">Rejected</div><div class="stat-val red" id="a-rejected">0</div></div>
+            <div class="stat"><div class="stat-label">Online</div><div class="stat-val" style="color:var(--green)" id="a-online">0</div></div>
           </div>
           <div class="search-box">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input type="text" placeholder="Cari nama atau email..." oninput="searchUsers(this.value)">
           </div>
-          <div class="table-wrap">
-            <table id="users-table">
-              <thead><tr><th>Pengguna</th><th>Kelas</th><th>Role</th><th>Status</th><th>Bergabung</th><th>Aksi</th></tr></thead>
-              <tbody id="users-tbody"><tr><td colspan="6" class="td-empty">Memuat data...</td></tr></tbody>
+          <div class="table-wrap" style="overflow-x:auto">
+            <table id="users-table" style="min-width:700px">
+              <thead><tr><th>Pengguna</th><th>Kelas</th><th>Role</th><th>Status</th><th>Online</th><th>Bergabung</th><th>Aksi</th></tr></thead>
+              <tbody id="users-tbody"><tr><td colspan="7" class="td-empty">Memuat data...</td></tr></tbody>
             </table>
           </div>
         </div>
+
+        <!-- MAPEL -->
         <div class="admin-sec" id="admin-mapel" style="display:none">
-          <h2 class="sec-title">Manajemen Mapel</h2>
-          <p class="sec-desc">Toggle untuk membuka atau mengunci akses kisi-kisi per mata pelajaran.</p>
+          <div class="sec-title-row">
+            <h2 class="sec-title">Manajemen Mapel</h2>
+            <button class="btn btn-primary btn-sm" onclick="openAddMapelModal()">+ Tambah Mapel</button>
+          </div>
+          <p class="sec-desc">Kelola mata pelajaran, toggle buka/kunci akses kisi-kisi.</p>
           <div class="mapel-grid" id="admin-mapel-grid"></div>
         </div>
-        <div class="admin-sec" id="admin-stats" style="display:none">
-          <h2 class="sec-title">Statistik</h2>
-          <div class="stats-row">
-            <div class="stat"><div class="stat-label">Daftar Hari Ini</div><div class="stat-val" id="stat-today">—</div></div>
-            <div class="stat"><div class="stat-label">Kelas Aktif</div><div class="stat-val blue">8F</div></div>
+
+        <!-- SOAL & MATERI -->
+        <div class="admin-sec" id="admin-soal" style="display:none">
+          <div class="sec-title-row">
+            <h2 class="sec-title">Soal & Materi</h2>
+            <button class="btn btn-primary btn-sm" onclick="openAddSoalModal()">+ Tambah Soal</button>
           </div>
-          <div class="empty-box">📈 Grafik analitik akan hadir segera.</div>
+          <p class="sec-desc">Kelola konten kisi-kisi per mata pelajaran. Mendukung Pilihan Ganda, Essay, dan Materi.</p>
+          <div class="field" style="max-width:320px;margin-bottom:20px">
+            <label>Pilih Mata Pelajaran</label>
+            <select id="soal-mapel-select" onchange="onSoalMapelChange(this.value)" class="soal-select"></select>
+          </div>
+          <div id="soal-list"></div>
         </div>
+
+        <!-- BROADCAST -->
+        <div class="admin-sec" id="admin-broadcast" style="display:none">
+          <h2 class="sec-title">📢 Broadcast Pesan</h2>
+          <p class="sec-desc">Kirim pesan ke semua pengguna aktif. Pesan muncul sebagai pop-up dan tidak berulang jika sudah ditutup.</p>
+          <div class="bc-form-card">
+            <div class="field"><label>Judul Pesan</label><input type="text" id="bc-form-title" placeholder="Judul broadcast..."></div>
+            <div class="field"><label>Isi Pesan (mendukung Markdown)</label><textarea id="bc-form-body" placeholder="Tulis pesan di sini... Mendukung **bold**, *italic*, dll." rows="5"></textarea></div>
+            <div class="field"><label>Jadwal Tampil (opsional)</label><input type="datetime-local" id="bc-form-schedule"></div>
+            <button id="btn-send-broadcast" class="btn btn-primary" onclick="sendBroadcast()">📢 Kirim Broadcast</button>
+          </div>
+          <h3 style="font-size:14px;font-weight:700;margin:24px 0 12px">Broadcast Aktif</h3>
+          <div id="broadcast-list"></div>
+        </div>
+
+        <!-- MONITORING -->
+        <div class="admin-sec" id="admin-monitoring" style="display:none">
+          <h2 class="sec-title">📡 Monitoring Pengguna</h2>
+          <p class="sec-desc">Pantau pengguna yang sedang aktif secara real-time. Data diperbarui setiap 30 detik.</p>
+          <div class="stats-row" style="margin-bottom:20px">
+            <div class="stat">
+              <div class="stat-label">Sedang Online</div>
+              <div class="stat-val" style="color:var(--green)" id="monitor-online-count">—</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Total Pengguna</div>
+              <div class="stat-val" id="monitor-total-count">—</div>
+            </div>
+          </div>
+          <div id="monitoring-list"></div>
+        </div>
+
+        <!-- LOGS -->
+        <div class="admin-sec" id="admin-logs" style="display:none">
+          <h2 class="sec-title">📋 Log Aktivitas Admin</h2>
+          <p class="sec-desc">Riwayat tindakan admin: approve, reject, ban, dan perubahan lainnya.</p>
+          <div id="logs-list"></div>
+        </div>
+
       </main>
     </div>
   </div>
@@ -259,7 +316,104 @@
   </div>
 </div>
 
+<!-- BROADCAST MODAL -->
+<div class="modal-bg" id="modal-broadcast">
+  <div class="modal">
+    <div class="bc-modal-badge">📢 Pemberitahuan</div>
+    <h3 class="modal-title" id="bc-title" style="margin-top:8px"></h3>
+    <div class="modal-body" id="bc-body"></div>
+    <div style="font-size:11px;color:var(--dim);margin-bottom:16px" id="bc-time"></div>
+    <button class="btn btn-primary w-full" id="btn-bc-close">Mengerti & Tutup</button>
+  </div>
+</div>
+
+<!-- BAN MODAL -->
+<div class="modal-bg" id="modal-ban">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-ban')">✕</button>
+    <span class="modal-icon">🚫</span>
+    <h3 class="modal-title">Ban Pengguna</h3>
+    <p class="modal-body">Anda akan memblokir akses: <strong id="ban-target-name"></strong></p>
+    <div class="field">
+      <label>Tipe Ban</label>
+      <select id="ban-type-select">
+        <option value="temp">Sementara (24 jam)</option>
+        <option value="permanent">Permanen</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Alasan Ban *</label>
+      <input type="text" id="ban-reason-input" placeholder="Jelaskan alasan pemblokiran...">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-ban')">Batal</button>
+      <button class="btn btn-danger" id="btn-ban-confirm" onclick="confirmBan()">🚫 Konfirmasi Ban</button>
+    </div>
+  </div>
+</div>
+
+<!-- MAPEL MODAL -->
+<div class="modal-bg" id="modal-mapel">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-mapel')">✕</button>
+    <span class="modal-icon">📚</span>
+    <h3 class="modal-title" id="mapel-modal-title">Tambah Mata Pelajaran</h3>
+    <input type="hidden" id="mapel-form-id">
+    <div class="field"><label>Nama Mapel *</label><input type="text" id="mapel-form-nama" placeholder="Contoh: Matematika"></div>
+    <div class="field"><label>Ikon (emoji)</label><input type="text" id="mapel-form-icon" placeholder="📚" maxlength="4"></div>
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1"><label>Warna Dari</label><input type="color" id="mapel-form-color-from" value="#4f8ef7" style="height:42px;width:100%;padding:4px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer"></div>
+      <div class="field" style="flex:1"><label>Warna Ke</label><input type="color" id="mapel-form-color-to" value="#9b7ef8" style="height:42px;width:100%;padding:4px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-mapel')">Batal</button>
+      <button class="btn btn-primary" id="btn-save-mapel" onclick="saveMapel()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- SOAL MODAL -->
+<div class="modal-bg" id="modal-soal">
+  <div class="modal modal-wide">
+    <button class="modal-close" onclick="closeModal('modal-soal')">✕</button>
+    <span class="modal-icon">📝</span>
+    <h3 class="modal-title" id="soal-modal-title">Tambah Soal</h3>
+    <input type="hidden" id="soal-form-id">
+    <div class="field"><label>Judul / Topik *</label><input type="text" id="soal-form-judul" placeholder="Contoh: Aljabar & Persamaan Linear"></div>
+    <div class="field">
+      <label>Tipe Konten</label>
+      <select id="soal-form-tipe">
+        <option value="materi">📘 Materi</option>
+        <option value="soal">📝 Soal (Pilihan Ganda / Essay)</option>
+        <option value="catatan">📌 Catatan</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Konten (Mendukung Markdown) *</label>
+      <textarea id="soal-form-konten" rows="10" placeholder="Tulis konten di sini...
+Mendukung:
+**bold**, *italic*, `kode`
+## Heading
+- List item
+> Kutipan
+| Tabel | Header |"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-soal')">Batal</button>
+      <button class="btn btn-primary" id="btn-save-soal" onclick="saveSoal()">Simpan</button>
+    </div>
+  </div>
+</div>
+
 <script src="supabase.js"></script>
 <script src="app.js"></script>
+<script>
+function closeSidebar() {
+  const sb = document.querySelector('.sidebar');
+  const toggle = document.querySelector('.sidebar-toggle');
+  if (sb) sb.classList.remove('open');
+  if (toggle) toggle.classList.remove('open');
+}
+</script>
 </body>
 </html>
