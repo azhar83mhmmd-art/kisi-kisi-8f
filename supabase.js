@@ -107,8 +107,10 @@ async function logoutUser() {
 
 // ── PROFILE ───────────────────────────────────────────────
 async function getProfile(userId) {
-  const { data } = await sb.from('profiles')
-    .select('*').eq('user_id', userId).maybeSingle();
+  // 5s timeout — never let the loader hang forever
+  const timeout = new Promise(resolve => setTimeout(() => resolve({ data: null }), 5000));
+  const query   = sb.from('profiles').select('*').eq('user_id', userId).maybeSingle();
+  const { data } = await Promise.race([query, timeout]);
   return data;
 }
 

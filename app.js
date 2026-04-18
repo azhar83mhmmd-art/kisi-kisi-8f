@@ -76,38 +76,44 @@ function hideLoader() {
 }
 
 // ── INIT APP ───────────────────────────────────────────────────────────────
-let _initAppForUserId = null; // track which user we already initialized
+// Only called on page refresh (existing session). Login/register route directly via routeUser().
 async function initApp(session) {
   if (!session) { hideLoader(); showPage('page-login'); return; }
-
-  // Skip if we already fully initialized for this exact user (e.g. duplicate SIGNED_IN after OTP)
-  if (_initAppForUserId === session.user.id && currentProfile) {
-    hideLoader(); return;
-  }
-  _initAppForUserId = session.user.id;
-
-  showLoader('Menyiapkan akun...');
   currentUser = session.user;
+  showLoader('Memuat...');
 
   const isOAuth = session.user.app_metadata?.provider === 'google';
   currentProfile = isOAuth
     ? await ensureProfile(session.user)
     : await getProfile(session.user.id);
 
-  if (!currentProfile) { hideLoader(); _initAppForUserId = null; await logoutUser(); return; }
+  if (!currentProfile) { hideLoader(); logoutUser(); return; }
 
-  // Check ban
-  if (currentProfile.ban_type === 'temp' && currentProfile.ban_until) {
-    if (new Date(currentProfile.ban_until) > new Date()) {
-      hideLoader(); showBannedPage(currentProfile); return;
-    }
-    // Expired — unban background
-    unbanUser(currentProfile.id).then(() => getProfile(currentUser.id).then(p => { if (p) currentProfile = p; }));
-  }
+  checkBanAndRoute(currentProfile);
+}
 
-  startPresence(); // always fire-and-forget
+// Central routing after we already have profile in hand — no extra fetch
+function routeUser(user, profile) {
+  currentUser    = user;
+  currentProfile = profile;
   hideLoader();
-  routeProfile(currentProfile);
+  checkBanAndRoute(profile);
+}
+
+function checkBanAndRoute(profile) {
+  if (profile.ban_type === 'temp' && profile.ban_until) {
+    if (new Date(profile.ban_until) > new Date()) {
+      hideLoader(); showBannedPage(profile); return;
+    }
+    // Expired — fix in background
+    unbanUser(profile.id).then(() => getProfile(currentUser.id).then(p => { if (p) currentProfile = p; }));
+  }
+  if (profile.status === 'rejected' && profile.ban_type) {
+    hideLoader(); showBannedPage(profile); return;
+  }
+  startPresence();
+  hideLoader();
+  routeProfile(profile);
   setTimeout(checkAndShowBroadcasts, 1500);
 }
 
@@ -191,21 +197,7 @@ async function handleLogin(e) {
   const res = await loginUser(email, pw);
   setLoading(btn, false);
   if (!res.success) { showToast('Gagal Masuk', res.error, 'error'); return; }
-  currentUser = res.user; currentProfile = res.profile;
-
-  // Check ban
-  if (res.profile.ban_type === 'temp' && res.profile.ban_until) {
-    if (new Date(res.profile.ban_until) > new Date()) {
-      showBannedPage(res.profile); return;
-    }
-  }
-  if (res.profile.status === 'rejected' && res.profile.ban_type) {
-    showBannedPage(res.profile); return;
-  }
-
-  startPresence(); // fire-and-forget
-  routeProfile(res.profile);
-  setTimeout(checkAndShowBroadcasts, 1500);
+  routeUser(res.user, res.profile);
 }
 
 // ── REGISTER ───────────────────────────────────────────────────────────────
@@ -287,17 +279,12 @@ async function submitOTP() {
   }
 
   clearInterval(otpInterval);
-  currentUser    = res.user;
-  currentProfile = res.profile;
-  // Pre-set so initApp skips the duplicate SIGNED_IN that Supabase fires after verifyOtp
-  _initAppForUserId = res.user.id;
-
   if (res.profile?.role === 'admin') {
     showToast('Berhasil!', `Selamat datang, ${res.profile.nama_lengkap}! 🎉`, 'success');
-    startPresence();
-    initAdmin(); showPage('page-admin');
-    setTimeout(checkAndShowBroadcasts, 1500);
+    routeUser(res.user, res.profile);
   } else {
+    currentUser    = res.user;
+    currentProfile = res.profile;
     showToast('Berhasil!', 'Akun dibuat. Menunggu persetujuan admin.', 'success');
     showPage('page-pending');
   }
@@ -321,9 +308,8 @@ async function checkStatus() {
   if (!p) return;
   currentProfile = p;
   if (p.status === 'approved') {
-    startPresence(); // fire-and-forget
-    initDashboard(); showPage('page-dashboard');
     showToast('Disetujui!', 'Selamat, akun Anda disetujui.', 'success');
+    routeUser(currentUser, p);
   } else if (p.status === 'rejected') showPage('page-rejected');
   else showToast('Masih Pending', 'Akun masih diverifikasi admin.', 'warning');
 }
@@ -871,7 +857,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setRole('siswa');
   showLoader('Memuat...');
 
-  // Get session immediately — no need to wait for onAuthStateChange for initial load
+  // Check for existing session immediately (page refresh / returning user)
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     await initApp(session);
@@ -880,19 +866,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     showPage('page-login');
   }
 
-  // Subscribe to future auth changes (login, logout, token refresh)
-  sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_OUT' || (!session && event !== 'INITIAL_SESSION')) {
+  // Only handle explicit sign-out. Login/register route themselves via routeUser().
+  // SIGNED_IN is intentionally ignored here — it fires AFTER login is already handled.
+  sb.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') {
       stopPresence();
-      _initAppForUserId = null;
       currentUser = currentProfile = null;
       hideLoader();
       showPage('page-login');
-    } else if (event === 'SIGNED_IN') {
-      // Only act if it's a NEW user session (not duplicate from OTP verify or token refresh)
-      if (session && _initAppForUserId !== session.user.id) {
-        await initApp(session);
-      }
     }
   });
 });
