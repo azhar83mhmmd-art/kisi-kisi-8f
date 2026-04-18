@@ -87,7 +87,7 @@ async function initApp(session) {
     ? await ensureProfile(session.user)
     : await getProfile(session.user.id);
 
-  if (!currentProfile) { hideLoader(); logoutUser(); return; }
+  if (!currentProfile) { hideLoader(); showPage('page-login'); return; }
 
   checkBanAndRoute(currentProfile);
 }
@@ -108,8 +108,11 @@ function checkBanAndRoute(profile) {
     // Expired — fix in background
     unbanUser(profile.id).then(() => getProfile(currentUser.id).then(p => { if (p) currentProfile = p; }));
   }
-  if (profile.status === 'rejected' && profile.ban_type) {
-    hideLoader(); showBannedPage(profile); return;
+  if (profile.status === 'rejected') {
+    hideLoader();
+    if (profile.ban_type) showBannedPage(profile);
+    else showPage('page-rejected');
+    return;
   }
   startPresence();
   hideLoader();
