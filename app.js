@@ -1528,9 +1528,9 @@ function closeRatingModal() {
 
 function sendRatingEmail(rating, komentar) {
   // EmailJS — ganti YOUR_SERVICE_ID, YOUR_TEMPLATE_ID, YOUR_PUBLIC_KEY
-  const EMAILJS_SERVICE  = 'YOUR_SERVICE_ID';
-  const EMAILJS_TEMPLATE = 'YOUR_TEMPLATE_ID';
-  const EMAILJS_KEY      = 'YOUR_PUBLIC_KEY';
+  const EMAILJS_SERVICE  = 'service_pyimyzb';
+  const EMAILJS_TEMPLATE = 'template_stf6xqs';
+  const EMAILJS_KEY      = 'HAzuBBggwHvM8b1YU';
 
   if (!window.emailjs) return;
   const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
