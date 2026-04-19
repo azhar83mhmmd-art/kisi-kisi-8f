@@ -49,8 +49,9 @@ function showAppLoading(msg = 'Memuat...') {
   const spinner = el.querySelector('.loading-bar'); if (spinner) spinner.style.display = '';
 }
 
-// ROOT CAUSE FIX #5 — showLoadingError: loading screen berubah jadi error UI
-// Ini mencegah "infinite white screen" — user tahu apa yang terjadi
+// showLoadingError — loading screen jadi error UI yang berguna
+// Tombol "Coba Lagi" → jalankan ulang onRetry (fetch nyata)
+// Tombol "Keluar & Login Ulang" → clear session + redirect login
 function showLoadingError(msg, onRetry) {
   const el = q('app-loading');
   if (!el) { hideAppLoading(); return; }
@@ -69,17 +70,22 @@ function showLoadingError(msg, onRetry) {
     el.querySelector('.loading-inner').appendChild(errBox);
   }
   errBox.style.display = 'flex';
+  // Ganti \n dengan <br> untuk tampilan multi-baris
+  const msgHtml = esc(msg).replace(/\\n|\n/g, '<br>');
   errBox.innerHTML = `
     <div style="font-size:36px">⚠️</div>
-    <div style="font-size:13px;color:var(--muted);line-height:1.6;max-width:280px">${esc(msg)}</div>
-    <button onclick="(${onRetry.toString()})()" 
-      style="padding:10px 24px;background:linear-gradient(135deg,#4f8ef7,#3a6fd8);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">
+    <div style="font-size:13px;color:var(--muted);line-height:1.7;max-width:280px">${msgHtml}</div>
+    <button id="btn-retry-load"
+      style="padding:10px 24px;background:linear-gradient(135deg,#4f8ef7,#3a6fd8);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;">
       🔄 Coba Lagi
     </button>
     <button onclick="forceLogout()" 
       style="padding:8px 20px;background:rgba(255,255,255,.06);color:var(--muted);border:1px solid rgba(255,255,255,.1);border-radius:10px;font-size:13px;cursor:pointer;">
       Keluar & Login Ulang
     </button>`;
+  // Pasang event listener (bukan inline onclick dengan toString agar aman)
+  const retryBtn = document.getElementById('btn-retry-load');
+  if (retryBtn && onRetry) retryBtn.addEventListener('click', onRetry);
 }
 
 function hideAppLoading() {
@@ -143,54 +149,82 @@ function md(text) {
 //  AUTH CORE — FIX UTAMA ADA DI SINI
 // ════════════════════════════════════════════════════════════
 
-// ROOT CAUSE FIX — fetchProfileSafe
-// Fungsi ini adalah satu-satunya tempat fetch profile.
-// - Selalu ada timeout (5 detik per percobaan)
-// - Jika null → autoCreate (jangan langsung signOut)
-// - Jika error → log + return null (jangan throw)
-// - Tidak ada infinite retry — max 2 percobaan
+// OPTIMIZED — fetchProfileSafe v4
+// - Cek localStorage cache DULU → tampil instan tanpa request server
+// - Fetch server di background → update UI jika ada perubahan
+// - Auto-retry dengan backoff saat koneksi lambat
+// - Tidak ada fake timeout / setTimeout palsu
 async function fetchProfileSafe(user) {
-  const isOAuth = user.app_metadata?.provider === 'google'
-    || user.app_metadata?.providers?.includes('google');
+  const isOAuth = (user.app_metadata && user.app_metadata.provider === 'google')
+    || (user.app_metadata && user.app_metadata.providers && user.app_metadata.providers.includes('google'));
 
   console.log('[Auth] fetchProfileSafe:', user.email, '| OAuth:', isOAuth);
 
-  // PERCOBAAN 1: Baca profil yang sudah ada
-  let profile = await getProfile(user.id);
+  // ── LANGKAH 0: Cek localStorage cache (tampil instan < 10ms) ──
+  const cached = profileCacheGet(user.id);
+  if (cached) {
+    console.log('[Auth] Profile dari localStorage cache — tampil instan');
+    // Refresh dari server di background (tidak blokir UI)
+    getProfile(user.id).then(fresh => {
+      if (fresh && currentProfile && fresh.user_id === currentProfile.user_id) {
+        const changed = JSON.stringify(fresh) !== JSON.stringify(currentProfile);
+        if (changed) {
+          console.log('[Auth] Profile diperbarui dari server (background refresh)');
+          currentProfile = fresh;
+          // Update UI jika status berubah (misal: pending → approved)
+          if (fresh.status !== cached.status || fresh.role !== cached.role) {
+            routeProfile(fresh);
+          }
+        }
+      }
+    }).catch(() => {});
+    return cached;
+  }
+
+  // ── LANGKAH 1: Fetch dari server dengan auto-retry ──
+  console.log('[Auth] Tidak ada cache, fetch dari server...');
+  let profile = null;
+  try {
+    profile = await withRetry(
+      function() { return getProfile(user.id); },
+      { maxAttempts: 3, baseDelay: 400, label: 'fetchProfileSafe' }
+    );
+  } catch(e) {
+    console.error('[Auth] fetchProfileSafe: semua retry gagal:', e.message);
+  }
+
   if (profile) {
-    console.log('[Auth] Profil ditemukan di percobaan 1');
+    console.log('[Auth] Profil ditemukan dari server');
     return profile;
   }
 
-  // Profil belum ada → tunggu DB trigger (berlaku untuk OAuth & OTP baru)
-  console.log('[Auth] Profil belum ada, tunggu 1 detik untuk DB trigger...');
-  await new Promise(r => setTimeout(r, 1000));
+  // ── LANGKAH 2: Tunggu DB trigger lalu coba lagi ──
+  console.log('[Auth] Profil belum ada, tunggu DB trigger 800ms...');
+  await new Promise(function(r) { setTimeout(r, 800); });
 
-  // PERCOBAAN 2: Baca lagi setelah tunggu
   profile = await getProfile(user.id);
   if (profile) {
-    console.log('[Auth] Profil ditemukan di percobaan 2 (pasca trigger)');
+    console.log('[Auth] Profil ditemukan setelah tunggu DB trigger');
     return profile;
   }
 
-  // Masih tidak ada → buat otomatis
-  console.log('[Auth] Profil tidak ditemukan, buat otomatis...');
+  // ── LANGKAH 3: Buat profil otomatis ──
+  console.log('[Auth] Profil tidak ada, buat otomatis...');
   profile = await ensureProfile(user);
-
   if (profile) {
     console.log('[Auth] Profil berhasil dibuat otomatis');
     return profile;
   }
 
-  // Gagal semuanya
   console.error('[Auth] fetchProfileSafe: semua upaya gagal');
   return null;
 }
 
-// ROOT CAUSE FIX — initApp yang tidak bisa stuck
-// - Selalu ada exit path (sukses | error dengan UI)
-// - Tidak ada loop tanpa batas
-// - Setiap step di-log untuk debugging
+// OPTIMIZED — initApp v4
+// - Jika ada cache → tampilkan UI dulu, load profil di background
+// - Tidak ada blocking UI
+// - Semua loading berdasarkan response server nyata
+// - Handle offline dengan pesan yang jelas
 async function initApp(session) {
   if (!session) {
     console.log('[Auth] initApp: session null → ke login');
@@ -201,37 +235,59 @@ async function initApp(session) {
 
   console.log('[Auth] initApp: session ada untuk', session.user.email);
   currentUser = session.user;
-  showAppLoading('Memuat profil...');
 
-  // Timeout 8 detik untuk seluruh proses fetch+create profile
-  // Ini mencegah initApp hang selamanya
+  // ── CEK CACHE DULU: tampilkan UI tanpa delay ──
+  const cachedProfile = profileCacheGet(session.user.id);
+  if (cachedProfile) {
+    console.log('[Auth] initApp: pakai cache → UI tampil instan');
+    currentProfile = cachedProfile;
+    routeProfile(cachedProfile);
+    // Fetch terbaru di background — tidak blokir
+    fetchProfileSafe(session.user).catch(() => {});
+    return;
+  }
+
+  // ── TIDAK ADA CACHE: tampilkan loading screen yang real ──
+  // Periksa koneksi terlebih dahulu
+  if (!isOnline()) {
+    showLoadingError(
+      'Tidak ada koneksi internet.\nHubungkan ke WiFi atau aktifkan data seluler, lalu coba lagi.',
+      function() { location.reload(); }
+    );
+    return;
+  }
+
+  showAppLoading('Memuat profil Anda...');
+
+  // Timeout 8 detik — semua berdasarkan response server nyata
   const profilePromise = fetchProfileSafe(session.user);
-  const timeoutPromise = new Promise(resolve =>
-    setTimeout(() => { resolve('TIMEOUT'); }, 8000)
-  );
+  const timeoutPromise = new Promise(function(resolve) {
+    setTimeout(function() { resolve('TIMEOUT'); }, 8000);
+  });
 
   const result = await Promise.race([profilePromise, timeoutPromise]);
 
-  // Handle timeout
   if (result === 'TIMEOUT') {
     console.error('[Auth] initApp TIMEOUT — profile fetch melebihi 8 detik');
     showLoadingError(
-      'Koneksi lambat. Gagal memuat profil.\nSilakan periksa koneksi internet Anda.',
-      () => location.reload()
+      'Koneksi terputus, mencoba kembali...\nServer lambat merespons. Periksa koneksi internet Anda.',
+      function() {
+        showAppLoading('Menghubungkan ke server...');
+        initApp(session);
+      }
     );
     return;
   }
 
   const profile = result;
 
-  // Profile tidak ada meskipun sudah dicoba semua cara
   if (!profile) {
     console.error('[Auth] initApp: profile null setelah semua upaya');
     showLoadingError(
       'Profil tidak ditemukan.\nKemungkinan akun belum terdaftar atau ada masalah database.',
-      async () => {
+      async function() {
         showAppLoading('Mencoba ulang...');
-        await initApp(session); // Satu kali retry manual
+        await initApp(session);
       }
     );
     return;
@@ -239,6 +295,20 @@ async function initApp(session) {
 
   console.log('[Auth] initApp: sukses → role:', profile.role, '| status:', profile.status);
   currentProfile = profile;
+
+  // Cek Google user yang belum set nama manual
+  const isGoogle = (session.user.app_metadata?.provider === 'google') ||
+    (session.user.app_metadata?.providers?.includes('google'));
+  if (isGoogle && !profile.nama_manual) {
+    _googleNameSession = session;
+    if (q('google-nama-input')) {
+      q('google-nama-input').value = profile.nama_lengkap || session.user.user_metadata?.full_name || '';
+    }
+    hideAppLoading();
+    showPage('page-google-name');
+    return;
+  }
+
   routeProfile(profile);
 }
 
@@ -251,10 +321,39 @@ function routeProfile(p) {
     showToast('Halo!', `Selamat datang, ${p.nama_lengkap} 👋`, 'success');
     initDashboard(); showPage('page-dashboard');
   } else if (p.status === 'pending') {
+    // Tampilkan nama di halaman pending
+    const nameEl = q('pending-name');
+    if (nameEl) nameEl.textContent = p.nama_lengkap;
+    const emailEl = q('pending-email');
+    if (emailEl) emailEl.textContent = p.email;
     showPage('page-pending');
+    // Realtime: otomatis redirect saat admin approve/reject
+    startPendingListener(p.user_id);
   } else {
     showPage('page-rejected');
   }
+}
+
+let _pendingChannel = null;
+function startPendingListener(userId) {
+  if (_pendingChannel) { try { _pendingChannel.unsubscribe(); } catch(_){} }
+  _pendingChannel = sb.channel('pending-status-' + userId)
+    .on('postgres_changes', {
+      event: 'UPDATE', schema: 'public', table: 'profiles',
+      filter: `user_id=eq.${userId}`
+    }, async payload => {
+      const status = payload.new?.status;
+      if (status === 'approved') {
+        if (_pendingChannel) { _pendingChannel.unsubscribe(); _pendingChannel = null; }
+        currentProfile = payload.new;
+        showToast('Disetujui! 🎉', 'Akun Anda telah disetujui admin.', 'success');
+        initDashboard(); showPage('page-dashboard');
+      } else if (status === 'rejected') {
+        if (_pendingChannel) { _pendingChannel.unsubscribe(); _pendingChannel = null; }
+        showPage('page-rejected');
+      }
+    })
+    .subscribe();
 }
 
 // ════════════════════════════════════════════════════════════
@@ -287,6 +386,7 @@ async function handleLogin(e) {
   const btn   = q('btn-login');
   const email = q('login-email').value.trim();
   const pw    = q('login-password').value;
+  if (!email || !pw) { showToast('Error', 'Email dan password wajib diisi.', 'error'); return; }
 
   setLoading(btn, true);
   const res = await loginUser(email, pw);
@@ -297,6 +397,17 @@ async function handleLogin(e) {
   currentUser = res.user; currentProfile = res.profile;
   showAppLoading('Memuat...');
   routeProfile(res.profile);
+}
+
+async function handleGoogleLogin() {
+  const btn = q('btn-google');
+  if (btn) btn.disabled = true;
+  const res = await loginWithGoogle();
+  if (!res.success) {
+    if (btn) btn.disabled = false;
+    showToast('Error', res.error || 'Gagal login Google.', 'error');
+  }
+  // Jika sukses → halaman akan redirect, tidak perlu action lain
 }
 
 async function handleRegister(e) {
@@ -412,16 +523,19 @@ async function initDashboard() {
   await loadMapel();
   rtMapel(() => { cacheDel('mapel:'); loadMapel(); });
   rtBroadcast(broadcast => showBroadcastModal(broadcast));
+  // Presence tracking
+  startPresenceTracking('dashboard');
 }
 
 async function loadMapel() {
   const grid = q('mapel-grid'); if (!grid) return;
 
+  // Skeleton loading nyata — animasi shimmer, bukan spinner kosong
   grid.innerHTML = [...Array(6)].map(() => `
-    <div class="mapel-card skeleton-card">
-      <div class="skel" style="width:36px;height:36px;border-radius:10px;margin-bottom:14px"></div>
-      <div class="skel" style="width:75%;height:13px;margin-bottom:8px"></div>
-      <div class="skel" style="width:50%;height:10px"></div>
+    <div class="mapel-card skeleton-card" aria-label="Memuat...">
+      <div class="skeleton skeleton-icon"></div>
+      <div class="skeleton skeleton-line lg"></div>
+      <div class="skeleton skeleton-line sm"></div>
     </div>`).join('');
 
   const { data, error } = await getMapelCached();
@@ -484,6 +598,8 @@ async function openKisi(id, nama, icon) {
   showPage('page-kisi');
   const tabBar = q('kisi-tab-bar'); if (tabBar) tabBar.style.display = 'flex';
   switchKisiTab('materi');
+  // Update presence
+  startPresenceTracking('kisi');
 }
 
 function switchKisiTab(tab) {
@@ -524,10 +640,14 @@ async function loadKisiQuestions(mapelId) {
   if (error || !data?.length) {
     list.innerHTML = `<div class="empty"><div class="e-icon">❓</div><p>Belum ada soal latihan.</p></div>`; return;
   }
+  quizStart(); // mulai timer
   list.innerHTML = `<div style="padding:0 20px 32px">` +
+    `<div class="quiz-timer-bar">⏱ Waktu berjalan: <span class="quiz-timer-val" id="quiz-timer-val">0:00</span></div>` +
     `<div class="soal-header"><span class="soal-count">${data.length} Soal</span>
      <button class="btn btn-ghost btn-sm" onclick="checkAllAnswers()">Periksa Semua</button></div>` +
     data.map((q_, i) => renderQuestionCard(q_, i)).join('') + `</div>`;
+  // Start live timer display
+  startQuizTimerDisplay();
 }
 
 function renderQuestionCard(q_, i) {
@@ -585,15 +705,48 @@ function checkAllAnswers() {
     if (fb) { fb.style.display='block'; fb.className=`q-feedback ${ok?'q-fb-correct':'q-fb-wrong'}`; fb.innerHTML=expHtml; }
   });
   const pct = total > 0 ? Math.round((correct/total)*100) : 0;
+  const scoreText = `Skor: ${correct}/${total} (${pct}%)`;
+
   showToast(
     pct >= 80 ? '🎉 Bagus!' : pct >= 60 ? '👍 Lumayan!' : '💪 Terus Belajar!',
-    `Skor: ${correct}/${total} (${pct}%)`,
+    scoreText,
     pct >= 80 ? 'success' : pct >= 60 ? 'info' : 'warning'
   );
+
+  // Hitung waktu pengerjaan
+  const timeMs = _quizTimeStart ? (Date.now() - _quizTimeStart) : 0;
+  stopQuizTimerDisplay();
+
+  // Simpan ke leaderboard
+  if (currentMapel && currentProfile && total > 0) {
+    saveQuizResult(currentMapel.id, currentProfile.nama_lengkap, correct, total, timeMs)
+      .catch(()=>{});
+  }
+
+  // Tampilkan rating popup (hanya sekali seumur hidup)
+  setTimeout(() => maybeShowRating(scoreText), 1200);
 }
 
 function toggleKisi(id) { q(`ki-${id}`)?.classList.toggle('open'); }
-function goBack()        { showPage('page-dashboard'); }
+function goBack()        {
+  stopQuizTimerDisplay();
+  startPresenceTracking('dashboard');
+  showPage('page-dashboard');
+}
+
+// ── QUIZ TIMER DISPLAY ────────────────────────────────────
+let _timerDisplayInterval = null;
+function startQuizTimerDisplay() {
+  clearInterval(_timerDisplayInterval);
+  _timerDisplayInterval = setInterval(() => {
+    const el = q('quiz-timer-val'); if (!el || !_quizTimeStart) return;
+    const elapsed = Date.now() - _quizTimeStart;
+    const m = Math.floor(elapsed / 60000);
+    const s = Math.floor((elapsed % 60000) / 1000);
+    el.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+  }, 1000);
+}
+function stopQuizTimerDisplay() { clearInterval(_timerDisplayInterval); }
 
 // ════════════════════════════════════════════════════════════
 //  BROADCAST POP-UP
@@ -608,6 +761,9 @@ function showBroadcastModal(b) {
   document.getElementById('bcast-overlay')?.remove();
   const el = document.createElement('div');
   el.id = 'bcast-overlay'; el.className = 'modal-bg open';
+  const imgHtml = b.image_url
+    ? `<div class="bcast-img-wrap"><img src="${b.image_url}" alt="Gambar" class="bcast-img" onclick="this.classList.toggle('bcast-img-zoom')"></div>`
+    : '';
   el.innerHTML = `
     <div class="modal bcast-modal">
       <div class="bcast-stripe"></div>
@@ -619,6 +775,7 @@ function showBroadcastModal(b) {
         </div>
         <button class="modal-close" style="position:static;margin-left:auto" onclick="closeBcast('${b.id}')">✕</button>
       </div>
+      ${imgHtml}
       <div class="bcast-body">${esc(b.message)}</div>
       <button class="btn btn-primary w-full" onclick="closeBcast('${b.id}')">✓ Mengerti</button>
     </div>`;
@@ -648,7 +805,7 @@ function initAdmin() {
 }
 
 function adminSection(sec) {
-  ['users','mapel','soal','broadcast','stats'].forEach(s => {
+  ['users','mapel','soal','broadcast','online','ratings','stats'].forEach(s => {
     q(`snav-${s}`)?.classList.toggle('active', s===sec);
     q(`nav-${s}`)?.classList.toggle('active', s===sec);
     const el = q(`admin-${s}`); if (el) el.style.display = s===sec ? 'block' : 'none';
@@ -657,6 +814,8 @@ function adminSection(sec) {
   if (sec==='mapel')     loadAdminMapel();
   if (sec==='soal')      loadAdminSoalPage();
   if (sec==='broadcast') loadBroadcastPage();
+  if (sec==='online')    loadOnlineUsers();
+  if (sec==='ratings')   loadAdminRatings();
   if (sec==='stats')     loadAdminStats();
 }
 
@@ -684,31 +843,40 @@ async function loadUsers() {
 function renderUsersTable(data) {
   const tbody = q('users-tbody'); if (!tbody) return;
   if (!data.length) { tbody.innerHTML = `<tr><td colspan="6" class="td-empty">Belum ada pengguna.</td></tr>`; return; }
-  tbody.innerHTML = data.map(u => `
-    <tr>
+  tbody.innerHTML = data.map(u => {
+    const isAdmin = u.role === 'admin';
+    const actions = isAdmin ? `<span style="color:var(--dim)">—</span>` : `<div class="acts">
+      ${u.status !== 'approved' ? `<button class="btn btn-success btn-sm" title="Setujui" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">✓ Setujui</button>` : ''}
+      ${u.status !== 'pending'  ? `<button class="btn btn-ghost btn-sm" title="Pending" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">⏳</button>` : ''}
+      <button class="btn btn-danger btn-sm" title="Tolak & Hapus" onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">✕ Tolak</button>
+    </div>`;
+    return `<tr>
       <td><div class="u-cell">
         <div class="avatar" style="width:32px;height:32px;font-size:11px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
         <div><div class="u-name">${esc(u.nama_lengkap)}</div><div class="u-email">${esc(u.email)}</div></div>
       </div></td>
       <td>${esc(u.kelas)}</td>
-      <td><span class="badge ${u.role==='admin'?'b-admin':'b-siswa'}">${u.role}</span></td>
+      <td><span class="badge ${isAdmin ? 'b-admin' : 'b-siswa'}">${u.role}</span></td>
       <td><span class="badge b-${u.status}">${u.status}</span></td>
       <td class="td-date hide-sm">${fmtDate(u.created_at)}</td>
-      <td>${u.role!=='admin'?`<div class="acts">
-        ${u.status!=='approved'?`<button class="btn btn-success btn-sm" title="Approve" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">✓</button>`:''}
-        ${u.status!=='rejected'?`<button class="btn btn-danger btn-sm" title="Reject" onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">✕</button>`:''}
-        ${u.status!=='pending'?`<button class="btn btn-ghost btn-sm" title="Pending" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">⏳</button>`:''}
-      </div>`:'<span style="color:var(--dim)">—</span>'}</td>
-    </tr>`).join('');
+      <td>${actions}</td>
+    </tr>`;
+  }).join('');
 }
 
 async function setStatus(id, status, nama) {
-  if (status==='rejected' && !confirm(`Reject akun ${nama}?`)) return;
+  if (status === 'rejected') {
+    if (!confirm(`Tolak & hapus akun "${nama}"?\n\nAkun yang ditolak akan dihapus permanen.`)) return;
+    const res = await deleteUserProfile(id);
+    if (res.success) { showToast('Dihapus', `Akun ${nama} dihapus.`, 'warning'); loadUsers(); loadAdminStats(); }
+    else showToast('Error', res.error, 'error');
+    return;
+  }
   const res = await updateUserStatus(id, status);
-  const labels = { approved:'Diapprove ✅', rejected:'Direject', pending:'Dikembalikan ke pending' };
-  const types  = { approved:'success', rejected:'warning', pending:'info' };
-  if (res.success) { showToast('Berhasil',`${nama} — ${labels[status]}`,types[status]); loadUsers(); loadAdminStats(); }
-  else showToast('Error',res.error,'error');
+  const labels = { approved: 'Disetujui ✅', pending: 'Ke Pending' };
+  const types  = { approved: 'success', pending: 'info' };
+  if (res.success) { showToast('Berhasil', `${nama} — ${labels[status]}`, types[status]); loadUsers(); loadAdminStats(); }
+  else showToast('Error', res.error, 'error');
 }
 
 function searchUsers(val) {
@@ -979,18 +1147,66 @@ async function loadBroadcastPage() {
         <span class="td-date">${fmtDate(b.created_at)}</span>
       </div>
       <div class="bcast-hist-msg">${esc(b.message)}</div>
+      ${b.image_url ? `<img src="${b.image_url}" alt="foto" class="bcast-hist-img" onclick="window.open('${b.image_url}','_blank')">` : ''}
     </div>`).join('');
 }
 
+function previewBcastImage(input) {
+  const wrap = q('bcast-img-preview-wrap');
+  const label = q('bcast-file-text');
+  if (!input.files?.[0]) { if(wrap) wrap.innerHTML=''; return; }
+  const file = input.files[0];
+  label.textContent = '📎 ' + file.name;
+  const url = URL.createObjectURL(file);
+  if (wrap) wrap.innerHTML = `
+    <div style="position:relative;display:inline-block;margin-top:8px;">
+      <img src="${url}" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid var(--border-m);">
+      <button onclick="removeBcastImage()" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
+    </div>`;
+}
+
+function removeBcastImage() {
+  const fi = q('bcast-image');
+  if (fi) fi.value = '';
+  const wrap = q('bcast-img-preview-wrap');
+  if (wrap) wrap.innerHTML = '';
+  const label = q('bcast-file-text');
+  if (label) label.textContent = '📎 Pilih foto...';
+}
+
 async function handleSendBroadcast() {
-  const title=q('bcast-title')?.value.trim()||'Pengumuman';
-  const message=q('bcast-message')?.value.trim();
+  const title   = q('bcast-title')?.value.trim()||'Pengumuman';
+  const message = q('bcast-message')?.value.trim();
   if (!message) { showToast('Error','Pesan tidak boleh kosong.','error'); return; }
-  const btn=q('btn-send-bcast'); setLoading(btn,true);
-  const res=await sendBroadcast(title,message);
-  setLoading(btn,false);
-  if (res.success) { showToast('Terkirim!','Broadcast dikirim.','success'); q('bcast-title').value=''; q('bcast-message').value=''; loadBroadcastPage(); }
-  else showToast('Gagal',res.error,'error');
+
+  const btn = q('btn-send-bcast'); setLoading(btn, true);
+
+  // Upload foto jika ada
+  let imageUrl = null;
+  const fileInput = q('bcast-image');
+  if (fileInput?.files?.[0]) {
+    const file = fileInput.files[0];
+    if (file.size > 3 * 1024 * 1024) {
+      showToast('Error', 'Ukuran foto max 3 MB.', 'error');
+      setLoading(btn, false); return;
+    }
+    const upRes = await uploadBroadcastImage(file);
+    if (!upRes.success) {
+      showToast('Gagal Upload', upRes.error, 'error');
+      setLoading(btn, false); return;
+    }
+    imageUrl = upRes.url;
+  }
+
+  const res = await sendBroadcast(title, message, imageUrl);
+  setLoading(btn, false);
+  if (res.success) {
+    showToast('Terkirim!', 'Broadcast dikirim.', 'success');
+    q('bcast-title').value = '';
+    q('bcast-message').value = '';
+    if (fileInput) { fileInput.value = ''; q('bcast-img-preview')?.remove(); }
+    loadBroadcastPage();
+  } else showToast('Gagal', res.error, 'error');
 }
 
 // ── MODAL ─────────────────────────────────────────────────
@@ -1009,8 +1225,66 @@ document.addEventListener('DOMContentLoaded', () => {
 
   console.log('[Boot] App dimuat, menunggu auth state...');
 
+  // ── DETEKSI KONEKSI — tampilkan banner offline/online ──
+  function updateConnectionBanner(online) {
+    let banner = document.getElementById('conn-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'conn-banner';
+      banner.style.cssText = [
+        'position:fixed;top:0;left:0;right:0;z-index:9999',
+        'padding:8px 16px;font-size:13px;font-weight:600',
+        'text-align:center;transition:transform .3s ease,opacity .3s ease',
+        'transform:translateY(-100%);opacity:0'
+      ].join(';');
+      document.body.appendChild(banner);
+    }
+    if (online) {
+      banner.textContent = '✅ Koneksi pulih — memuat ulang data...';
+      banner.style.background = '#16a34a';
+      banner.style.color = '#fff';
+      banner.style.transform = 'translateY(0)';
+      banner.style.opacity = '1';
+      setTimeout(() => {
+        banner.style.transform = 'translateY(-100%)';
+        banner.style.opacity = '0';
+      }, 3000);
+    } else {
+      banner.textContent = '📡 Tidak ada koneksi internet — mode offline';
+      banner.style.background = '#dc2626';
+      banner.style.color = '#fff';
+      banner.style.transform = 'translateY(0)';
+      banner.style.opacity = '1';
+    }
+  }
+
+  // Daftarkan listener koneksi dari supabase.js
+  onConnectionChange(function(online) {
+    updateConnectionBanner(online);
+    if (online && currentUser && !currentProfile) {
+      // Reconnect: coba muat profil lagi
+      console.log('[Net] Kembali online, mencoba muat ulang profil...');
+      showAppLoading('Menghubungkan ke server...');
+      sb.auth.getSession().then(function({ data: { session } }) {
+        if (session) initApp(session);
+        else { hideAppLoading(); showPage('page-login'); }
+      });
+    }
+  });
+
+  // Jika sudah offline saat load
+  if (!isOnline()) updateConnectionBanner(false);
+
+  // ── AUTO-LOGIN: cek session tersimpan langsung ──
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (session && !currentProfile && !isAuthBusy()) {
+      console.log('[Boot] getSession() menemukan sesi aktif — inisialisasi langsung');
+      clearTimeout(safetyTimer);
+      initApp(session);
+    }
+  });
+
   // Safety timeout 10 detik — jika onAuthStateChange tidak pernah terpicu
-  // (ini terjadi jika Supabase JS gagal load atau CDN error)
   const safetyTimer = setTimeout(() => {
     console.warn('[Boot] Safety timeout 10 dtk — onAuthStateChange tidak terpicu');
     hideAppLoading();
@@ -1020,14 +1294,11 @@ document.addEventListener('DOMContentLoaded', () => {
   sb.auth.onAuthStateChange(async (event, session) => {
     console.log('[Auth] onAuthStateChange:', event, '| session:', session ? 'ada' : 'null');
 
-    // ⚠️  KRITIS: Jika OTP verify sedang berjalan, SKIP
-    // Tanpa ini: dua initApp() berjalan bersamaan = race condition = stuck
     if (isAuthBusy()) {
       console.log('[Auth] Busy (OTP verify) — skip onAuthStateChange');
       return;
     }
 
-    // Safety timer dibersihkan saat event pertama tiba
     clearTimeout(safetyTimer);
 
     if (event === 'SIGNED_OUT' || !session) {
@@ -1041,14 +1312,328 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-      // TOKEN_REFRESHED = session diperbarui otomatis, tidak perlu re-init
       if (event === 'TOKEN_REFRESHED' && currentProfile) {
         console.log('[Auth] TOKEN_REFRESHED — sudah login, skip init');
         return;
       }
       console.log('[Auth]', event, '— mulai initApp');
-      showAppLoading('Memuat profil...');
       await initApp(session);
     }
   });
 });
+
+// ════════════════════════════════════════════════════════════
+//  GOOGLE NAME INPUT — Setelah login Google, input nama dulu
+// ════════════════════════════════════════════════════════════
+
+let _googleNameSession = null; // simpan session sementara
+
+async function checkGoogleNewUser(session) {
+  const user = session.user;
+  const isGoogle = (user.app_metadata?.provider === 'google') ||
+    (user.app_metadata?.providers?.includes('google'));
+  if (!isGoogle) return false;
+
+  // Cek apakah profile sudah ada DAN sudah punya nama custom (bukan dari Google)
+  const profile = await getProfile(user.id);
+
+  // Jika profile belum ada, atau nama masih nama Google (auto-generated)
+  if (!profile) {
+    _googleNameSession = session;
+    const googleName = user.user_metadata?.full_name || user.user_metadata?.name || '';
+    if (q('google-nama-input')) q('google-nama-input').value = googleName;
+    hideAppLoading();
+    showPage('page-google-name');
+    return true;
+  }
+
+  // Cek flag "nama sudah diisi manual"
+  if (!profile.nama_manual) {
+    _googleNameSession = session;
+    if (q('google-nama-input')) q('google-nama-input').value = profile.nama_lengkap || '';
+    hideAppLoading();
+    showPage('page-google-name');
+    return true;
+  }
+
+  return false;
+}
+
+async function submitGoogleName() {
+  const nama = q('google-nama-input')?.value.trim();
+  if (!nama || nama.length < 2) {
+    showToast('Error', 'Nama lengkap minimal 2 karakter.', 'error'); return;
+  }
+
+  const btn = q('btn-google-name');
+  setLoading(btn, true);
+  showAppLoading('Menyimpan profil...');
+
+  const session = _googleNameSession;
+  if (!session) { hideAppLoading(); showPage('page-login'); return; }
+
+  const user = session.user;
+
+  // Upsert profile dengan nama manual dan flag nama_manual=true
+  const { error } = await sb.from('profiles').upsert({
+    user_id:      user.id,
+    nama_lengkap: nama,
+    email:        user.email,
+    kelas:        '8F',
+    role:         'siswa',
+    status:       'pending',
+    nama_manual:  true
+  }, { onConflict: 'user_id' });
+
+  setLoading(btn, false);
+
+  if (error) {
+    hideAppLoading();
+    showToast('Error', 'Gagal menyimpan nama: ' + error.message, 'error'); return;
+  }
+
+  _googleNameSession = null;
+  const profile = await getProfile(user.id);
+  currentUser = user; currentProfile = profile;
+  routeProfile(profile);
+}
+
+// ════════════════════════════════════════════════════════════
+//  LEADERBOARD
+// ════════════════════════════════════════════════════════════
+
+async function openLeaderboard() {
+  openModal('modal-leaderboard');
+  // Isi filter mapel
+  const select = q('lb-mapel-filter');
+  if (select && select.options.length <= 1) {
+    const { data } = await getMapelCached();
+    (data || []).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id; opt.textContent = m.icon + ' ' + m.nama;
+      select.appendChild(opt);
+    });
+  }
+  await loadLeaderboard();
+}
+
+async function loadLeaderboard() {
+  const content = q('leaderboard-content');
+  const mapelId = q('lb-mapel-filter')?.value || '';
+  if (!content) return;
+
+  content.innerHTML = [1,2,3].map(() =>
+    `<div class="skel" style="height:68px;border-radius:14px;margin-bottom:10px"></div>`
+  ).join('');
+
+  const { data } = await getLeaderboard(mapelId);
+
+  if (!data || !data.length) {
+    content.innerHTML = `<div class="empty"><div class="e-icon">🏆</div><p style="color:var(--muted)">Belum ada hasil quiz. Coba kerjakan soal latihan dulu!</p></div>`;
+    return;
+  }
+
+  const myName = currentProfile?.nama_lengkap || '';
+  const rankEmoji = ['🥇','🥈','🥉'];
+  const rankClass = ['gold','silver','bronze'];
+  const starLabels = ['','⭐','','','','']; // 1-5
+
+  content.innerHTML = data.slice(0, 20).map((r, i) => {
+    const isMe = r.nama_lengkap === myName;
+    const mins = Math.floor(r.time_ms / 60000);
+    const secs = Math.floor((r.time_ms % 60000) / 1000);
+    const timeStr = r.time_ms > 0 ? `⏱ ${mins}m ${secs}s` : '';
+    const rankLabel = i < 3 ? rankEmoji[i] : `${i+1}`;
+    const rankCls = i < 3 ? rankClass[i] : '';
+    return `
+      <div class="lb-item ${isMe ? 'lb-you' : ''}" style="animation-delay:${i*.04}s">
+        <div class="lb-rank ${rankCls}">${rankLabel}</div>
+        <div class="lb-info">
+          <div class="lb-name">${esc(r.nama_lengkap)} ${isMe ? '<span style="font-size:11px;color:var(--blue)">(Kamu)</span>' : ''}</div>
+          <div class="lb-meta">${timeStr}</div>
+        </div>
+        <div class="lb-score">
+          <div class="lb-pct">${r.pct}%</div>
+          <div class="lb-time">${r.score}/${r.total} benar</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+//  RATING POPUP — Muncul sekali setelah quiz selesai
+// ════════════════════════════════════════════════════════════
+
+const RATING_DONE_KEY = 'kisi8f_rated';
+let _selectedRating = 0;
+let _quizTimeStart  = null; // waktu mulai quiz
+
+function quizStart() {
+  _quizTimeStart = Date.now();
+}
+
+function setRatingStar(val) {
+  _selectedRating = val;
+  const labels = ['', '😞 Kurang bagus', '😐 Cukup', '😊 Lumayan', '😄 Bagus!', '🤩 Luar biasa!'];
+  const stars = document.querySelectorAll('.star-btn');
+  stars.forEach((s, i) => s.classList.toggle('active', i < val));
+  const lbl = q('star-label'); if (lbl) lbl.textContent = labels[val] || '';
+  const wrap = q('rating-comment-wrap');
+  if (wrap) wrap.style.display = val ? 'block' : 'none';
+  const btn = q('btn-submit-rating'); if (btn) btn.disabled = false;
+}
+
+async function maybeShowRating(scoreText) {
+  // Cek localStorage dulu (offline-first)
+  if (localStorage.getItem(RATING_DONE_KEY)) return;
+  // Cek database
+  const rated = await hasRated();
+  if (rated) { localStorage.setItem(RATING_DONE_KEY, '1'); return; }
+  // Tampilkan popup
+  const resEl = q('rating-quiz-result');
+  if (resEl) resEl.textContent = scoreText;
+  _selectedRating = 0;
+  const stars = document.querySelectorAll('.star-btn');
+  stars.forEach(s => s.classList.remove('active'));
+  const lbl = q('star-label'); if (lbl) lbl.textContent = 'Ketuk bintang untuk memberi nilai';
+  const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = 'none';
+  const btn = q('btn-submit-rating'); if (btn) btn.disabled = true;
+  if (q('rating-comment')) q('rating-comment').value = '';
+  openModal('modal-rating');
+}
+
+async function submitRating() {
+  if (!_selectedRating) return;
+  const komentar = q('rating-comment')?.value.trim() || '';
+  const btn = q('btn-submit-rating'); setLoading(btn, true);
+
+  const res = await saveSiteRating(_selectedRating, komentar);
+  setLoading(btn, false);
+
+  if (res.success) {
+    localStorage.setItem(RATING_DONE_KEY, '1');
+    // Kirim email via EmailJS
+    sendRatingEmail(_selectedRating, komentar);
+    closeModal('modal-rating');
+    showToast('Terima kasih! 🙏', 'Penilaian Anda telah dikirim.', 'success');
+  } else {
+    showToast('Gagal', res.error || 'Gagal menyimpan penilaian.', 'error');
+  }
+}
+
+function closeRatingModal() {
+  localStorage.setItem(RATING_DONE_KEY, '1'); // skip sekali
+  closeModal('modal-rating');
+}
+
+function sendRatingEmail(rating, komentar) {
+  // EmailJS — ganti YOUR_SERVICE_ID, YOUR_TEMPLATE_ID, YOUR_PUBLIC_KEY
+  const EMAILJS_SERVICE  = 'YOUR_SERVICE_ID';
+  const EMAILJS_TEMPLATE = 'YOUR_TEMPLATE_ID';
+  const EMAILJS_KEY      = 'YOUR_PUBLIC_KEY';
+
+  if (!window.emailjs) return;
+  const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+  const nama  = currentProfile?.nama_lengkap || 'Anonim';
+
+  emailjs.init({ publicKey: EMAILJS_KEY });
+  emailjs.send(EMAILJS_SERVICE, EMAILJS_TEMPLATE, {
+    from_name:  nama,
+    rating:     rating,
+    stars:      stars,
+    komentar:   komentar || '(tidak ada komentar)',
+    timestamp:  new Date().toLocaleString('id-ID'),
+    website:    'KisiKisi 8F'
+  }).then(() => {
+    console.log('[Email] Rating terkirim ke email.');
+  }).catch(err => {
+    console.warn('[Email] Gagal kirim email:', err);
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  ADMIN — ONLINE USERS
+// ════════════════════════════════════════════════════════════
+
+async function loadOnlineUsers() {
+  const list    = q('online-users-list');
+  const countEl = q('online-count-text');
+  if (!list) return;
+
+  list.innerHTML = `<div class="skel" style="height:60px;border-radius:12px;margin-bottom:8px"></div>`.repeat(3);
+
+  const { data } = await getOnlineUsers();
+  const now = Date.now();
+
+  if (!data.length) {
+    if (countEl) countEl.textContent = '0 pengguna online saat ini';
+    list.innerHTML = `<div class="empty-hint" style="text-align:center;padding:24px 0">Belum ada pengguna yang aktif.</div>`;
+    return;
+  }
+
+  if (countEl) countEl.textContent = `${data.length} pengguna sedang online`;
+
+  const pageLabels = { dashboard: '📋 Dashboard', kisi: '📖 Belajar', admin: '⭐ Admin Panel' };
+
+  list.innerHTML = data.map((u, i) => {
+    const secsAgo = Math.round((now - new Date(u.last_seen).getTime()) / 1000);
+    const timeLabel = secsAgo < 60 ? 'Baru saja' : `${Math.floor(secsAgo / 60)} mnt lalu`;
+    const pageLabel = pageLabels[u.page] || ('📄 ' + u.page);
+    return `
+      <div class="online-user-card" style="animation-delay:${i*.05}s">
+        <div class="avatar" style="width:36px;height:36px;font-size:13px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
+        <div class="online-dot"></div>
+        <div style="flex:1;min-width:0">
+          <div class="online-user-name">${esc(u.nama_lengkap)}</div>
+          <div class="online-user-page">${pageLabel}</div>
+        </div>
+        <div class="online-user-time">${timeLabel}</div>
+      </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+//  ADMIN — RATINGS
+// ════════════════════════════════════════════════════════════
+
+async function loadAdminRatings() {
+  const summary = q('ratings-summary');
+  const list    = q('ratings-list');
+  if (!summary && !list) return;
+
+  const { data } = await getAllRatings();
+
+  if (!data.length) {
+    if (summary) summary.innerHTML = `<div class="empty-hint">Belum ada penilaian.</div>`;
+    if (list)    list.innerHTML    = '';
+    return;
+  }
+
+  const avg = (data.reduce((s, r) => s + r.rating, 0) / data.length).toFixed(1);
+  const fullStars   = Math.round(avg);
+  const starsStr    = '★'.repeat(fullStars) + '☆'.repeat(5 - fullStars);
+
+  if (q('ratings-summary')) {
+    q('ratings-summary').innerHTML = `
+      <div class="ratings-summary-box">
+        <div class="ratings-avg">${avg}</div>
+        <div class="ratings-stars-avg">${starsStr}</div>
+        <div class="ratings-count">dari ${data.length} penilaian</div>
+      </div>`;
+  }
+
+  if (list) {
+    list.innerHTML = data.map((r, i) => {
+      const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
+      return `
+        <div class="rating-item" style="animation-delay:${i*.04}s">
+          <div class="rating-item-top">
+            <div class="rating-item-name">${esc(r.nama_lengkap)}</div>
+            <div class="rating-stars">${stars}</div>
+          </div>
+          ${r.komentar ? `<div class="rating-comment">"${esc(r.komentar)}"</div>` : ''}
+          <div style="font-size:11px;color:var(--dim);margin-top:4px">${fmtDate(r.created_at)}</div>
+        </div>`;
+    }).join('');
+  }
+}

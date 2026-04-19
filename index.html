@@ -72,7 +72,7 @@
       </form>
 
       <div class="divider"><span>atau</span></div>
-      <button class="btn btn-google w-full" onclick="loginWithGoogle()">
+      <button class="btn btn-google w-full" id="btn-google" onclick="handleGoogleLogin()">
         <svg width="18" height="18" viewBox="0 0 18 18">
           <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
           <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z"/>
@@ -102,6 +102,7 @@
         <input class="otp-box" id="otp-1" maxlength="1" inputmode="numeric" oninput="otpInput(event,1)" onkeydown="otpKey(event,1)">
         <input class="otp-box" id="otp-2" maxlength="1" inputmode="numeric" oninput="otpInput(event,2)" onkeydown="otpKey(event,2)">
         <input class="otp-box" id="otp-3" maxlength="1" inputmode="numeric" oninput="otpInput(event,3)" onkeydown="otpKey(event,3)">
+        <div class="otp-sep">—</div>
         <input class="otp-box" id="otp-4" maxlength="1" inputmode="numeric" oninput="otpInput(event,4)" onkeydown="otpKey(event,4)">
         <input class="otp-box" id="otp-5" maxlength="1" inputmode="numeric" oninput="otpInput(event,5)" onkeydown="otpKey(event,5)">
         <input class="otp-box" id="otp-6" maxlength="1" inputmode="numeric" oninput="otpInput(event,6)" onkeydown="otpKey(event,6)">
@@ -115,15 +116,51 @@
   </div>
 </div>
 
+<!-- ════════════════ GOOGLE NAME INPUT ════════════════ -->
+<div id="page-google-name" class="page">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-mark" style="background:linear-gradient(135deg,#4285F4,#34A853)">👤</div>
+        <div>
+          <div class="brand-name">Satu Langkah Lagi!</div>
+          <div class="brand-sub">Masuk dengan Google berhasil ✓</div>
+        </div>
+      </div>
+      <p class="hint" style="margin-bottom:20px;text-align:center;line-height:1.6">
+        Selamat datang! Masukkan nama lengkap Anda yang akan ditampilkan kepada sesama siswa kelas <strong style="color:var(--blue)">8F</strong>.
+      </p>
+      <div class="field">
+        <label>Nama Lengkap *</label>
+        <input type="text" id="google-nama-input" placeholder="Contoh: Budi Santoso" autocomplete="name" maxlength="60">
+      </div>
+      <div class="google-name-note">
+        <span>📌</span>
+        <span>Nama ini akan muncul di leaderboard dan profil Anda.</span>
+      </div>
+      <button class="btn btn-primary w-full mt-2" id="btn-google-name" onclick="submitGoogleName()">
+        ✓ Lanjutkan
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- ════════════════ PENDING ════════════════ -->
 <div id="page-pending" class="page">
   <div class="center-page">
     <div class="status-card">
       <div class="status-icon">⏳</div>
       <h2>Menunggu Persetujuan</h2>
-      <p>Akun Anda sedang diverifikasi admin. Harap bersabar ya!</p>
-      <div class="info-box">Anda belum bisa mengakses kisi-kisi sampai admin menyetujui akun Anda.</div>
-      <button class="btn btn-primary w-full" onclick="checkStatus()">🔄 Cek Status</button>
+      <p>Halo <strong id="pending-name">—</strong>! Akun Anda sedang diverifikasi oleh admin.</p>
+      <div class="info-box" style="margin:16px 0">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Akun terdaftar sebagai</div>
+        <div style="font-weight:700;font-size:14px" id="pending-email">—</div>
+      </div>
+      <div class="info-box" style="background:rgba(79,142,247,.07);border-color:rgba(79,142,247,.2);display:flex;align-items:center;gap:10px;margin-bottom:20px">
+        <span style="font-size:20px">🔔</span>
+        <div style="font-size:12px;line-height:1.6;color:var(--muted)">Halaman ini akan <strong style="color:var(--blue)">otomatis berpindah</strong> saat admin menyetujui akun Anda. Tidak perlu refresh!</div>
+      </div>
+      <button class="btn btn-primary w-full" onclick="checkStatus()">🔄 Cek Status Manual</button>
       <button class="btn btn-ghost w-full mt-1" onclick="logoutUser()">Keluar</button>
     </div>
   </div>
@@ -134,9 +171,9 @@
   <div class="center-page">
     <div class="status-card">
       <div class="status-icon" style="color:var(--red)">✕</div>
-      <h2 style="color:var(--red)">Akses Ditolak</h2>
-      <p>Pendaftaran Anda ditolak. Hubungi admin untuk info lebih lanjut.</p>
-      <button class="btn btn-ghost w-full" onclick="logoutUser()">Kembali ke Login</button>
+      <h2 style="color:var(--red)">Akun Tidak Ditemukan</h2>
+      <p>Akun Anda telah dihapus atau tidak terdaftar. Silakan daftar ulang atau hubungi admin.</p>
+      <button class="btn btn-primary w-full" onclick="logoutUser()">Daftar / Login Ulang</button>
     </div>
   </div>
 </div>
@@ -145,10 +182,13 @@
 <div id="page-dashboard" class="page">
   <nav class="nav">
     <div class="nav-brand"><span class="brand-mark sm">K</span> KisiKisi 8F</div>
-    <div class="nav-user" onclick="logoutUser()">
-      <div class="avatar" id="dash-avatar">?</div>
-      <span id="dash-name" class="nav-username">—</span>
-      <span class="nav-exit">↗</span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="btn btn-ghost btn-sm" onclick="openLeaderboard()" style="font-size:12px;padding:6px 12px">🏆 Leaderboard</button>
+      <div class="nav-user" onclick="logoutUser()">
+        <div class="avatar" id="dash-avatar">?</div>
+        <span id="dash-name" class="nav-username">—</span>
+        <span class="nav-exit">↗</span>
+      </div>
     </div>
   </nav>
   <div class="content">
@@ -207,6 +247,8 @@
     <button class="admin-tab"        id="nav-mapel"     onclick="adminSection('mapel')">📚 Mapel</button>
     <button class="admin-tab"        id="nav-soal"      onclick="adminSection('soal')">📝 Soal</button>
     <button class="admin-tab"        id="nav-broadcast" onclick="adminSection('broadcast')">📢 Broadcast</button>
+    <button class="admin-tab"        id="nav-online"    onclick="adminSection('online')">🟢 Online</button>
+    <button class="admin-tab"        id="nav-ratings"   onclick="adminSection('ratings')">⭐ Rating</button>
     <button class="admin-tab"        id="nav-stats"     onclick="adminSection('stats')">📊 Statistik</button>
   </div>
 
@@ -217,6 +259,8 @@
       <div class="sidebar-item"        id="snav-mapel"     onclick="adminSection('mapel')">📚 Mapel</div>
       <div class="sidebar-item"        id="snav-soal"      onclick="adminSection('soal')">📝 Soal</div>
       <div class="sidebar-item"        id="snav-broadcast" onclick="adminSection('broadcast')">📢 Broadcast</div>
+      <div class="sidebar-item"        id="snav-online"    onclick="adminSection('online')">🟢 Yang Online</div>
+      <div class="sidebar-item"        id="snav-ratings"   onclick="adminSection('ratings')">⭐ Rating Website</div>
       <div class="sidebar-item"        id="snav-stats"     onclick="adminSection('stats')">📊 Statistik</div>
     </aside>
 
@@ -296,6 +340,14 @@
             <label>Pesan *</label>
             <textarea id="bcast-message" rows="4" placeholder="Tulis pesan yang akan ditampilkan kepada semua siswa..."></textarea>
           </div>
+          <div class="field">
+            <label>Foto (opsional, max 3 MB)</label>
+            <label class="bcast-file-label" for="bcast-image">
+              <span id="bcast-file-text">📎 Pilih foto...</span>
+              <input type="file" id="bcast-image" accept="image/*" style="display:none" onchange="previewBcastImage(this)">
+            </label>
+            <div id="bcast-img-preview-wrap"></div>
+          </div>
           <div class="bcast-note">⚡ Pesan ini langsung muncul sebagai pop-up pada semua siswa yang sedang online.</div>
           <button class="btn btn-primary" id="btn-send-bcast" onclick="handleSendBroadcast()" style="width:100%">📢 Kirim Sekarang</button>
         </div>
@@ -311,6 +363,39 @@
           <div class="stat"><div class="stat-label">Kelas Aktif</div><div class="stat-val blue">8F</div></div>
         </div>
         <div class="empty-box">📈 Grafik analitik akan hadir segera.</div>
+      </div>
+
+      <!-- ONLINE USERS -->
+      <div class="admin-sec" id="admin-online" style="display:none">
+        <div class="sec-header-row" style="align-items:center">
+          <div>
+            <h2 class="sec-title">🟢 Pengguna Online</h2>
+            <p class="sec-desc">Daftar siswa yang sedang aktif di website saat ini.</p>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="loadOnlineUsers()">🔄 Refresh</button>
+        </div>
+        <div class="online-count-bar">
+          <div class="online-pulse"></div>
+          <span id="online-count-text">Memuat...</span>
+        </div>
+        <div id="online-users-list">
+          <div class="skel" style="height:60px;border-radius:12px;margin-bottom:8px"></div>
+          <div class="skel" style="height:60px;border-radius:12px;margin-bottom:8px"></div>
+          <div class="skel" style="height:60px;border-radius:12px"></div>
+        </div>
+      </div>
+
+      <!-- RATINGS -->
+      <div class="admin-sec" id="admin-ratings" style="display:none">
+        <h2 class="sec-title">⭐ Rating Website</h2>
+        <p class="sec-desc">Penilaian dari pengguna setelah menyelesaikan kuis.</p>
+        <div id="ratings-summary" class="ratings-summary-box">
+          <div class="skel" style="height:80px;border-radius:12px"></div>
+        </div>
+        <div id="ratings-list" style="margin-top:16px">
+          <div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div>
+          <div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div>
+        </div>
       </div>
 
     </main>
@@ -420,6 +505,64 @@
   </div>
 </div>
 
+<!-- LEADERBOARD MODAL -->
+<div class="modal-bg" id="modal-leaderboard">
+  <div class="modal modal-lg">
+    <button class="modal-close" onclick="closeModal('modal-leaderboard')">✕</button>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <span style="font-size:28px">🏆</span>
+      <div>
+        <h3 class="modal-title" style="margin:0">Top Leaderboard</h3>
+        <p style="font-size:12px;color:var(--muted);margin:0">Jawaban tercepat & paling benar</p>
+      </div>
+    </div>
+    <div class="field" style="margin-bottom:16px">
+      <label>Filter Mata Pelajaran</label>
+      <select id="lb-mapel-filter" onchange="loadLeaderboard()">
+        <option value="">🏅 Semua Mata Pelajaran</option>
+      </select>
+    </div>
+    <div id="leaderboard-content">
+      <div class="skel" style="height:64px;border-radius:12px;margin-bottom:8px"></div>
+      <div class="skel" style="height:64px;border-radius:12px;margin-bottom:8px"></div>
+      <div class="skel" style="height:64px;border-radius:12px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- RATING MODAL -->
+<div class="modal-bg" id="modal-rating">
+  <div class="modal" style="text-align:center">
+    <div class="rating-modal-icon">🎉</div>
+    <h3 class="modal-title">Quiz Selesai!</h3>
+    <p class="modal-body" id="rating-quiz-result" style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:4px">—</p>
+    <p class="modal-body" style="margin-bottom:24px">Bagaimana pengalaman belajar Anda di <strong>KisiKisi 8F</strong>?</p>
+
+    <div class="star-rating-row" id="star-rating-row">
+      <button class="star-btn" data-val="1" onclick="setRatingStar(1)">★</button>
+      <button class="star-btn" data-val="2" onclick="setRatingStar(2)">★</button>
+      <button class="star-btn" data-val="3" onclick="setRatingStar(3)">★</button>
+      <button class="star-btn" data-val="4" onclick="setRatingStar(4)">★</button>
+      <button class="star-btn" data-val="5" onclick="setRatingStar(5)">★</button>
+    </div>
+    <div class="star-label" id="star-label">Ketuk bintang untuk memberi nilai</div>
+
+    <div id="rating-comment-wrap" style="margin-top:18px;text-align:left;display:none">
+      <label style="font-size:13px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">
+        💬 Komentar <span style="font-weight:400;color:var(--muted)">(opsional)</span>
+      </label>
+      <textarea id="rating-comment" rows="3" placeholder="Ceritakan pengalaman Anda... saran, kritik, atau kesan." style="width:100%;background:var(--surface-2);border:1px solid var(--border-m);border-radius:10px;color:var(--text);padding:12px;font-size:13px;resize:vertical;font-family:inherit"></textarea>
+    </div>
+
+    <div class="modal-footer" style="margin-top:20px">
+      <button class="btn btn-ghost" onclick="closeRatingModal()">Lewati</button>
+      <button class="btn btn-primary" id="btn-submit-rating" onclick="submitRating()" disabled>Kirim Penilaian</button>
+    </div>
+  </div>
+</div>
+
+<!-- EmailJS + Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="supabase.js"></script>
 <script src="app.js"></script>
 </body>
