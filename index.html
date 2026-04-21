@@ -6,17 +6,15 @@
   <title>KisiKisi 8F</title>
   <meta name="theme-color" content="#060810">
   <meta name="description" content="Platform kisi-kisi eksklusif Kelas 8F">
-  <!-- Preconnect untuk percepat font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <!-- Supabase dimuat duluan -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- ═══════════════════════════════════ LOADING ═══════════ -->
+<!-- LOADING -->
 <div id="app-loading">
   <div class="loading-inner">
     <div class="loading-logo">K</div>
@@ -59,14 +57,44 @@
         <div class="field"><label>Nama Lengkap</label><input type="text" id="reg-nama" placeholder="Nama lengkap" autocomplete="name" required></div>
         <div class="field"><label>Email</label><input type="email" id="reg-email" placeholder="nama@email.com" autocomplete="email" required></div>
         <div class="field"><label>Password</label><input type="password" id="reg-password" placeholder="Min. 6 karakter" minlength="6" autocomplete="new-password" required></div>
+
+        <!-- KELAS DROPDOWN -->
+        <div class="field">
+          <label>Kelas</label>
+          <select id="reg-kelas" required>
+            <option value="">-- Pilih Kelas --</option>
+            <option value="8A">8A</option>
+            <option value="8B">8B</option>
+            <option value="8C">8C</option>
+            <option value="8D">8D</option>
+            <option value="8E">8E</option>
+            <option value="8F" selected>8F</option>
+            <option value="8G">8G</option>
+          </select>
+        </div>
+
         <div class="role-label">Daftar Sebagai</div>
         <div class="role-selector">
-          <button type="button" id="role-siswa" class="role-btn role-active siswa-active" onclick="setRole('siswa')">🎓 Siswa</button>
-          <button type="button" id="role-admin" class="role-btn" onclick="setRole('admin')">⭐ Admin</button>
+          <button type="button" id="role-siswa" class="role-btn role-active siswa-active" onclick="setRole('siswa')">Siswa</button>
+          <button type="button" id="role-admin" class="role-btn" onclick="setRole('admin')">Admin</button>
         </div>
         <div id="secret-wrap" class="secret-field" style="display:none">
-          <div class="field"><label>🔑 Kode Rahasia Admin</label><input type="password" id="reg-secret" placeholder="Masukkan kode rahasia"></div>
+          <div class="field"><label>Kode Rahasia Admin</label><input type="password" id="reg-secret" placeholder="Masukkan kode rahasia"></div>
         </div>
+
+        <!-- TERMS CHECKBOX -->
+        <div class="terms-check-wrap">
+          <label class="terms-check-label">
+            <input type="checkbox" id="reg-terms" class="terms-checkbox">
+            <span class="terms-check-box"></span>
+            <span class="terms-check-text">
+              Saya telah membaca dan menyetujui
+              <button type="button" class="link terms-link" onclick="openTermsModal()">Syarat dan Ketentuan</button>
+            </span>
+          </label>
+          <div id="terms-error" class="terms-error" style="display:none">Anda wajib menyetujui Syarat dan Ketentuan.</div>
+        </div>
+
         <button type="submit" id="btn-register" class="btn btn-primary w-full mt-2">Kirim OTP</button>
         <p class="hint">OTP dikirim ke email · Berlaku 5 menit</p>
       </form>
@@ -90,7 +118,7 @@
   <div class="auth-wrap">
     <div class="auth-card">
       <div class="auth-brand">
-        <div class="brand-mark" style="background:var(--amber)">🔐</div>
+        <div class="brand-mark" style="background:var(--amber)">@</div>
         <div>
           <div class="brand-name">Verifikasi OTP</div>
           <div class="brand-sub">Dikirim ke <span id="otp-email-display" style="color:var(--blue)"></span> · <span id="otp-role-info" style="color:var(--amber);font-weight:700"></span></div>
@@ -111,7 +139,7 @@
       <div class="otp-meta">Berlaku: <span id="otp-countdown" class="otp-timer">5:00</span></div>
       <button id="btn-verify-otp" class="btn btn-primary w-full" onclick="submitOTP()">Verifikasi</button>
       <button class="btn btn-ghost w-full mt-1" onclick="handleResendOTP()">Kirim Ulang OTP</button>
-      <p class="hint" style="text-align:center;margin-top:12px"><span class="link" onclick="showPage('page-login')">← Kembali ke Login</span></p>
+      <p class="hint" style="text-align:center;margin-top:12px"><span class="link" onclick="showPage('page-login')">Kembali ke Login</span></p>
     </div>
   </div>
 </div>
@@ -121,25 +149,47 @@
   <div class="auth-wrap">
     <div class="auth-card">
       <div class="auth-brand">
-        <div class="brand-mark" style="background:linear-gradient(135deg,#4285F4,#34A853)">👤</div>
+        <div class="brand-mark" style="background:linear-gradient(135deg,#4285F4,#34A853)">G</div>
         <div>
-          <div class="brand-name">Satu Langkah Lagi!</div>
-          <div class="brand-sub">Masuk dengan Google berhasil ✓</div>
+          <div class="brand-name">Satu Langkah Lagi</div>
+          <div class="brand-sub">Masuk dengan Google berhasil</div>
         </div>
       </div>
-      <p class="hint" style="margin-bottom:20px;text-align:center;line-height:1.6">
-        Selamat datang! Masukkan nama lengkap Anda yang akan ditampilkan kepada sesama siswa kelas <strong style="color:var(--blue)">8F</strong>.
+      <p class="hint" style="margin-bottom:16px;text-align:center;line-height:1.6">
+        Masukkan nama lengkap dan pilih kelas Anda untuk melanjutkan.
       </p>
       <div class="field">
-        <label>Nama Lengkap *</label>
+        <label>Nama Lengkap</label>
         <input type="text" id="google-nama-input" placeholder="Contoh: Budi Santoso" autocomplete="name" maxlength="60">
       </div>
-      <div class="google-name-note">
-        <span>📌</span>
-        <span>Nama ini akan muncul di leaderboard dan profil Anda.</span>
+      <!-- Kelas untuk Google user -->
+      <div class="field">
+        <label>Kelas</label>
+        <select id="google-kelas-input">
+          <option value="">-- Pilih Kelas --</option>
+          <option value="8A">8A</option>
+          <option value="8B">8B</option>
+          <option value="8C">8C</option>
+          <option value="8D">8D</option>
+          <option value="8E">8E</option>
+          <option value="8F" selected>8F</option>
+          <option value="8G">8G</option>
+        </select>
+      </div>
+      <!-- Terms untuk Google user -->
+      <div class="terms-check-wrap">
+        <label class="terms-check-label">
+          <input type="checkbox" id="google-terms" class="terms-checkbox">
+          <span class="terms-check-box"></span>
+          <span class="terms-check-text">
+            Saya menyetujui
+            <button type="button" class="link terms-link" onclick="openTermsModal()">Syarat dan Ketentuan</button>
+          </span>
+        </label>
+        <div id="google-terms-error" class="terms-error" style="display:none">Wajib menyetujui Syarat dan Ketentuan.</div>
       </div>
       <button class="btn btn-primary w-full mt-2" id="btn-google-name" onclick="submitGoogleName()">
-        ✓ Lanjutkan
+        Lanjutkan
       </button>
     </div>
   </div>
@@ -149,7 +199,7 @@
 <div id="page-pending" class="page">
   <div class="center-page">
     <div class="status-card">
-      <div class="status-icon">⏳</div>
+      <div class="status-icon">o</div>
       <h2>Menunggu Persetujuan</h2>
       <p>Halo <strong id="pending-name">—</strong>! Akun Anda sedang diverifikasi oleh admin.</p>
       <div class="info-box" style="margin:16px 0">
@@ -157,10 +207,9 @@
         <div style="font-weight:700;font-size:14px" id="pending-email">—</div>
       </div>
       <div class="info-box" style="background:rgba(79,142,247,.07);border-color:rgba(79,142,247,.2);display:flex;align-items:center;gap:10px;margin-bottom:20px">
-        <span style="font-size:20px">🔔</span>
-        <div style="font-size:12px;line-height:1.6;color:var(--muted)">Halaman ini akan <strong style="color:var(--blue)">otomatis berpindah</strong> saat admin menyetujui akun Anda. Tidak perlu refresh!</div>
+        <div style="font-size:12px;line-height:1.6;color:var(--muted)">Halaman ini akan <strong style="color:var(--blue)">otomatis berpindah</strong> saat admin menyetujui akun Anda. Tidak perlu refresh.</div>
       </div>
-      <button class="btn btn-primary w-full" onclick="checkStatus()">🔄 Cek Status Manual</button>
+      <button class="btn btn-primary w-full" onclick="checkStatus()">Cek Status</button>
       <button class="btn btn-ghost w-full mt-1" onclick="logoutUser()">Keluar</button>
     </div>
   </div>
@@ -170,10 +219,15 @@
 <div id="page-rejected" class="page">
   <div class="center-page">
     <div class="status-card">
-      <div class="status-icon" style="color:var(--red)">✕</div>
-      <h2 style="color:var(--red)">Akun Tidak Ditemukan</h2>
-      <p>Akun Anda telah dihapus atau tidak terdaftar. Silakan daftar ulang atau hubungi admin.</p>
-      <button class="btn btn-primary w-full" onclick="logoutUser()">Daftar / Login Ulang</button>
+      <div class="status-icon" style="color:var(--red);font-size:32px;font-family:var(--mono)">X</div>
+      <h2 style="color:var(--red)">Akun Dinonaktifkan</h2>
+      <p>Akun Anda telah ditolak atau akses dicabut oleh admin.</p>
+      <div class="info-box" id="rejection-reason-box" style="display:none;background:rgba(242,92,92,.08);border-color:rgba(242,92,92,.25);margin:16px 0">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em">Alasan</div>
+        <div style="font-size:13px;color:var(--red);font-weight:500" id="rejection-reason-text">—</div>
+      </div>
+      <p style="font-size:12px;color:var(--muted)">Silakan hubungi admin jika ada pertanyaan. Email notifikasi telah dikirimkan ke akun Anda.</p>
+      <button class="btn btn-primary w-full" style="margin-top:20px" onclick="logoutUser()">Kembali ke Login</button>
     </div>
   </div>
 </div>
@@ -182,12 +236,13 @@
 <div id="page-dashboard" class="page">
   <nav class="nav">
     <div class="nav-brand"><span class="brand-mark sm">K</span> KisiKisi 8F</div>
-    <div style="display:flex;align-items:center;gap:10px">
-      <button class="btn btn-ghost btn-sm" onclick="openLeaderboard()" style="font-size:12px;padding:6px 12px">🏆 Leaderboard</button>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="openRatingPage()" style="font-size:12px;padding:6px 12px">Rating</button>
+      <button class="btn btn-ghost btn-sm" onclick="openLeaderboard()" style="font-size:12px;padding:6px 12px">Leaderboard</button>
       <div class="nav-user" onclick="logoutUser()">
         <div class="avatar" id="dash-avatar">?</div>
         <span id="dash-name" class="nav-username">—</span>
-        <span class="nav-exit">↗</span>
+        <span class="nav-exit">out</span>
       </div>
     </div>
   </nav>
@@ -200,7 +255,7 @@
     <div class="stats-row">
       <div class="stat"><div class="stat-label">Total Mapel</div><div class="stat-val" id="stat-total">—</div></div>
       <div class="stat"><div class="stat-label">Tersedia</div><div class="stat-val green" id="stat-avail">—</div></div>
-      <div class="stat"><div class="stat-label">Kelas</div><div class="stat-val blue">8F</div></div>
+      <div class="stat"><div class="stat-label">Kelas</div><div class="stat-val blue" id="stat-kelas">8F</div></div>
     </div>
     <div class="section-head">
       <span class="section-title">Mata Pelajaran</span>
@@ -214,62 +269,91 @@
 <div id="page-kisi" class="page">
   <nav class="nav">
     <div class="nav-brand"><span class="brand-mark sm">K</span> KisiKisi 8F</div>
-    <div class="nav-user" onclick="goBack()"><span class="nav-exit">←</span> <span class="nav-username">Kembali</span></div>
+    <div class="nav-user" onclick="goBack()"><span class="nav-exit">back</span> <span class="nav-username">Kembali</span></div>
   </nav>
   <div class="kisi-hero" id="kisi-hero"></div>
-
-  <!-- TAB BAR -->
   <div class="kisi-tab-bar" id="kisi-tab-bar" style="display:none">
-    <button class="kisi-tab active" id="ktab-materi" onclick="switchKisiTab('materi')">📖 Materi & Kisi-kisi</button>
-    <button class="kisi-tab" id="ktab-questions" onclick="switchKisiTab('questions')">❓ Soal Latihan</button>
+    <button class="kisi-tab active" id="ktab-materi"    onclick="switchKisiTab('materi')">Materi</button>
+    <button class="kisi-tab"        id="ktab-questions" onclick="switchKisiTab('questions')">Soal Latihan</button>
   </div>
-
   <div class="content" id="kisi-list"></div>
+</div>
+
+<!-- ════════════════ HALAMAN RATING PUBLIK ════════════════ -->
+<div id="page-rating" class="page">
+  <nav class="nav">
+    <div class="nav-brand"><span class="brand-mark sm">K</span> KisiKisi 8F</div>
+    <div class="nav-user" onclick="showPage('page-dashboard')"><span class="nav-exit">back</span> <span class="nav-username">Kembali</span></div>
+  </nav>
+  <div class="content">
+    <div class="page-header">
+      <div class="eyebrow">Transparan &amp; Real-time</div>
+      <h1 class="page-title">Rating Website</h1>
+      <p class="page-desc">Penilaian langsung dari pengguna KisiKisi 8F</p>
+    </div>
+    <div id="public-rating-summary" style="margin-bottom:20px">
+      <div class="skel" style="height:80px;border-radius:14px"></div>
+    </div>
+    <div id="my-rating-section" style="margin-bottom:20px;display:none"></div>
+    <div class="section-head" style="margin-bottom:12px">
+      <span class="section-title">Semua Penilaian</span>
+      <span class="live-dot">Live</span>
+    </div>
+    <div id="public-rating-list">
+      <div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div>
+      <div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div>
+      <div class="skel" style="height:70px;border-radius:12px"></div>
+    </div>
+  </div>
 </div>
 
 <!-- ════════════════ ADMIN ════════════════ -->
 <div id="page-admin" class="page">
   <nav class="nav">
-    <div class="nav-brand"><span class="brand-mark sm" style="background:var(--amber)">★</span> <span class="nav-username">Admin Panel</span></div>
+    <div class="nav-brand"><span class="brand-mark sm" style="background:var(--amber)">A</span> <span class="nav-username">Admin Panel</span></div>
     <div class="nav-right">
       <span class="live-dot">Realtime</span>
       <div class="nav-user" onclick="logoutUser()">
         <div class="avatar" id="admin-avatar">A</div>
         <span id="admin-name" class="nav-username">Admin</span>
-        <span class="nav-exit">↗</span>
+        <span class="nav-exit">out</span>
       </div>
     </div>
   </nav>
 
-  <!-- Mobile tab bar -->
   <div class="admin-tabs">
-    <button class="admin-tab active" id="nav-users"     onclick="adminSection('users')">👥 User</button>
-    <button class="admin-tab"        id="nav-mapel"     onclick="adminSection('mapel')">📚 Mapel</button>
-    <button class="admin-tab"        id="nav-soal"      onclick="adminSection('soal')">📝 Soal</button>
-    <button class="admin-tab"        id="nav-broadcast" onclick="adminSection('broadcast')">📢 Broadcast</button>
-    <button class="admin-tab"        id="nav-online"    onclick="adminSection('online')">🟢 Online</button>
-    <button class="admin-tab"        id="nav-ratings"   onclick="adminSection('ratings')">⭐ Rating</button>
-    <button class="admin-tab"        id="nav-stats"     onclick="adminSection('stats')">📊 Statistik</button>
+    <button class="admin-tab active" id="nav-users"     onclick="adminSection('users')">Pengguna</button>
+    <button class="admin-tab"        id="nav-mapel"     onclick="adminSection('mapel')">Mapel</button>
+    <button class="admin-tab"        id="nav-soal"      onclick="adminSection('soal')">Soal</button>
+    <button class="admin-tab"        id="nav-broadcast" onclick="adminSection('broadcast')">Broadcast</button>
+    <button class="admin-tab"        id="nav-online"    onclick="adminSection('online')">Online</button>
+    <button class="admin-tab"        id="nav-ratings"   onclick="adminSection('ratings')">Rating</button>
+    <button class="admin-tab"        id="nav-stats"     onclick="adminSection('stats')">Statistik</button>
   </div>
 
   <div class="admin-layout">
     <aside class="sidebar">
       <div class="sidebar-label">Menu</div>
-      <div class="sidebar-item active" id="snav-users"     onclick="adminSection('users')">👥 Pengguna</div>
-      <div class="sidebar-item"        id="snav-mapel"     onclick="adminSection('mapel')">📚 Mapel</div>
-      <div class="sidebar-item"        id="snav-soal"      onclick="adminSection('soal')">📝 Soal</div>
-      <div class="sidebar-item"        id="snav-broadcast" onclick="adminSection('broadcast')">📢 Broadcast</div>
-      <div class="sidebar-item"        id="snav-online"    onclick="adminSection('online')">🟢 Yang Online</div>
-      <div class="sidebar-item"        id="snav-ratings"   onclick="adminSection('ratings')">⭐ Rating Website</div>
-      <div class="sidebar-item"        id="snav-stats"     onclick="adminSection('stats')">📊 Statistik</div>
+      <div class="sidebar-item active" id="snav-users"     onclick="adminSection('users')">Pengguna</div>
+      <div class="sidebar-item"        id="snav-mapel"     onclick="adminSection('mapel')">Mapel</div>
+      <div class="sidebar-item"        id="snav-soal"      onclick="adminSection('soal')">Soal</div>
+      <div class="sidebar-item"        id="snav-broadcast" onclick="adminSection('broadcast')">Broadcast</div>
+      <div class="sidebar-item"        id="snav-online"    onclick="adminSection('online')">Yang Online</div>
+      <div class="sidebar-item"        id="snav-ratings"   onclick="adminSection('ratings')">Rating Website</div>
+      <div class="sidebar-item"        id="snav-stats"     onclick="adminSection('stats')">Statistik</div>
     </aside>
 
     <main class="admin-main">
 
       <!-- USERS -->
       <div class="admin-sec" id="admin-users">
-        <h2 class="sec-title">Manajemen Pengguna</h2>
-        <div class="stats-row">
+        <div class="sec-header-row">
+          <div>
+            <h2 class="sec-title">Manajemen Pengguna</h2>
+            <p class="sec-desc">Setujui atau tolak pendaftaran. Akun yang ditolak tidak dapat login.</p>
+          </div>
+        </div>
+        <div class="stats-row" style="margin-bottom:16px">
           <div class="stat"><div class="stat-label">Total</div><div class="stat-val" id="a-total">0</div></div>
           <div class="stat"><div class="stat-label">Pending</div><div class="stat-val amber" id="a-pending">0</div></div>
           <div class="stat"><div class="stat-label">Approved</div><div class="stat-val green" id="a-approved">0</div></div>
@@ -277,7 +361,7 @@
         </div>
         <div class="search-box">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" placeholder="Cari nama, email, status..." oninput="searchUsers(this.value)">
+          <input type="text" placeholder="Cari nama, email, status, kelas..." oninput="searchUsers(this.value)">
         </div>
         <div class="table-wrap">
           <table id="users-table">
@@ -292,9 +376,9 @@
         <div class="sec-header-row">
           <div>
             <h2 class="sec-title">Manajemen Mapel</h2>
-            <p class="sec-desc">Tambah, edit, atau hapus mata pelajaran. Toggle untuk kunci/buka.</p>
+            <p class="sec-desc">Tambah, edit, atau hapus mata pelajaran. Toggle untuk kunci atau buka.</p>
           </div>
-          <button class="btn btn-primary" onclick="openAddMapel()">＋ Tambah Mapel</button>
+          <button class="btn btn-primary" onclick="openAddMapel()">Tambah Mapel</button>
         </div>
         <div class="mapel-grid" id="admin-mapel-grid"></div>
       </div>
@@ -307,21 +391,18 @@
             <p class="sec-desc">Kelola kisi-kisi materi dan soal latihan interaktif.</p>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-ghost" onclick="openAddKisi()">＋ Kisi-kisi</button>
-            <button class="btn btn-primary" onclick="openAddQuestion()">＋ Soal</button>
+            <button class="btn btn-ghost" onclick="openAddKisi()">Tambah Kisi-kisi</button>
+            <button class="btn btn-primary" onclick="openAddQuestion()">Tambah Soal</button>
           </div>
         </div>
         <div class="field" style="margin-bottom:16px">
           <label>Pilih Mata Pelajaran</label>
           <select id="soal-mapel-select" onchange="onSoalMapelChange()"><option value="">-- Pilih --</option></select>
         </div>
-
-        <!-- Tab kisi vs questions -->
         <div class="soal-tab-bar">
-          <button class="soal-tab active" id="stab-kisi"      onclick="switchSoalAdminTab('kisi')">📖 Kisi-kisi / Materi</button>
-          <button class="soal-tab"        id="stab-questions" onclick="switchSoalAdminTab('questions')">❓ Soal Latihan (MCQ)</button>
+          <button class="soal-tab active" id="stab-kisi"      onclick="switchSoalAdminTab('kisi')">Kisi-kisi / Materi</button>
+          <button class="soal-tab"        id="stab-questions" onclick="switchSoalAdminTab('questions')">Soal Latihan</button>
         </div>
-
         <div id="kisi-admin-section">
           <div id="kisi-admin-list"><div class="empty-hint">Pilih mata pelajaran di atas.</div></div>
         </div>
@@ -332,24 +413,24 @@
 
       <!-- BROADCAST -->
       <div class="admin-sec" id="admin-broadcast" style="display:none">
-        <h2 class="sec-title">📢 Broadcast Pengumuman</h2>
-        <p class="sec-desc">Kirim pesan yang langsung muncul sebagai pop-up ke semua siswa yang sedang online.</p>
+        <h2 class="sec-title">Broadcast Pengumuman</h2>
+        <p class="sec-desc">Kirim pesan yang langsung muncul sebagai notifikasi kepada semua siswa yang sedang online.</p>
         <div class="bcast-form-card">
           <div class="field"><label>Judul Pengumuman</label><input type="text" id="bcast-title" placeholder="Contoh: Ulangan Besok Ditunda" maxlength="80"></div>
           <div class="field">
-            <label>Pesan *</label>
+            <label>Pesan</label>
             <textarea id="bcast-message" rows="4" placeholder="Tulis pesan yang akan ditampilkan kepada semua siswa..."></textarea>
           </div>
           <div class="field">
-            <label>Foto (opsional, max 3 MB)</label>
+            <label>Foto (opsional, maks 3 MB)</label>
             <label class="bcast-file-label" for="bcast-image">
-              <span id="bcast-file-text">📎 Pilih foto...</span>
+              <span id="bcast-file-text">Pilih foto...</span>
               <input type="file" id="bcast-image" accept="image/*" style="display:none" onchange="previewBcastImage(this)">
             </label>
             <div id="bcast-img-preview-wrap"></div>
           </div>
-          <div class="bcast-note">⚡ Pesan ini langsung muncul sebagai pop-up pada semua siswa yang sedang online.</div>
-          <button class="btn btn-primary" id="btn-send-bcast" onclick="handleSendBroadcast()" style="width:100%">📢 Kirim Sekarang</button>
+          <div class="bcast-note">Pesan ini langsung muncul kepada siswa yang sedang online.</div>
+          <button class="btn btn-primary" id="btn-send-bcast" onclick="handleSendBroadcast()" style="width:100%">Kirim Sekarang</button>
         </div>
         <h3 style="font-size:14px;font-weight:700;margin:24px 0 12px">Riwayat Broadcast</h3>
         <div id="broadcast-history"></div>
@@ -360,19 +441,19 @@
         <h2 class="sec-title">Statistik</h2>
         <div class="stats-row">
           <div class="stat"><div class="stat-label">Daftar Hari Ini</div><div class="stat-val" id="stat-today">—</div></div>
-          <div class="stat"><div class="stat-label">Kelas Aktif</div><div class="stat-val blue">8F</div></div>
+          <div class="stat"><div class="stat-label">Platform</div><div class="stat-val blue">KisiKisi 8F</div></div>
         </div>
-        <div class="empty-box">📈 Grafik analitik akan hadir segera.</div>
+        <div class="empty-box">Grafik analitik akan hadir segera.</div>
       </div>
 
       <!-- ONLINE USERS -->
       <div class="admin-sec" id="admin-online" style="display:none">
         <div class="sec-header-row" style="align-items:center">
           <div>
-            <h2 class="sec-title">🟢 Pengguna Online</h2>
+            <h2 class="sec-title">Pengguna Online</h2>
             <p class="sec-desc">Daftar siswa yang sedang aktif di website saat ini.</p>
           </div>
-          <button class="btn btn-ghost btn-sm" onclick="loadOnlineUsers()">🔄 Refresh</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadOnlineUsers()">Refresh</button>
         </div>
         <div class="online-count-bar">
           <div class="online-pulse"></div>
@@ -387,8 +468,8 @@
 
       <!-- RATINGS -->
       <div class="admin-sec" id="admin-ratings" style="display:none">
-        <h2 class="sec-title">⭐ Rating Website</h2>
-        <p class="sec-desc">Penilaian dari pengguna setelah menyelesaikan kuis.</p>
+        <h2 class="sec-title">Rating Website</h2>
+        <p class="sec-desc">Penilaian dari pengguna. Update real-time.</p>
         <div id="ratings-summary" class="ratings-summary-box">
           <div class="skel" style="height:80px;border-radius:12px"></div>
         </div>
@@ -400,20 +481,20 @@
 
     </main>
   </div>
-</div><!-- end .app -->
+</div><!-- end page-admin -->
 
-</div>
+</div><!-- end .app -->
 
 <!-- ═════════════════════ MODALS ═════════════════════ -->
 
 <!-- DISCLAIMER -->
 <div class="modal-bg" id="modal-disclaimer">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('modal-disclaimer')">✕</button>
-    <span class="modal-icon" id="disc-icon">📚</span>
+    <button class="modal-close" onclick="closeModal('modal-disclaimer')">x</button>
+    <span class="modal-icon" id="disc-icon">+</span>
     <h3 class="modal-title">Disclaimer — <span id="disc-name"></span></h3>
     <p class="modal-body">Materi ini disusun khusus untuk siswa kelas <strong>8F</strong> sebagai bahan belajar. Bersifat <strong>rahasia dan eksklusif</strong>.</p>
-    <div class="modal-warn">⚠️ Dilarang menyebarkan konten ini kepada pihak luar.</div>
+    <div class="modal-warn">Dilarang menyebarkan konten ini kepada pihak luar.</div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-disclaimer')">Batal</button>
       <button class="btn btn-primary" id="btn-disc-ok">Saya Mengerti</button>
@@ -421,18 +502,107 @@
   </div>
 </div>
 
+<!-- TERMS & CONDITIONS MODAL -->
+<div class="modal-bg" id="modal-terms">
+  <div class="modal modal-lg" style="max-height:80vh;display:flex;flex-direction:column">
+    <button class="modal-close" onclick="closeModal('modal-terms')">x</button>
+    <h3 class="modal-title">Syarat dan Ketentuan</h3>
+    <div class="terms-content" style="overflow-y:auto;flex:1;padding-right:4px">
+      <div class="terms-section">
+        <h4>1. Penerimaan Ketentuan</h4>
+        <p>Dengan mendaftar dan menggunakan website ini, pengguna dianggap telah membaca, memahami, dan menyetujui seluruh ketentuan yang berlaku. Jika tidak menyetujui, pengguna tidak diperkenankan menggunakan layanan ini.</p>
+      </div>
+      <div class="terms-section">
+        <h4>2. Ruang Lingkup Layanan</h4>
+        <p>Website ini merupakan platform pembelajaran dan kuis yang digunakan untuk membantu proses belajar sesuai dengan aturan yang berlaku.</p>
+      </div>
+      <div class="terms-section">
+        <h4>3. Pendaftaran</h4>
+        <p>Pengguna wajib mengisi data yang benar saat pendaftaran, memilih kelas yang sesuai, dan menyetujui syarat dan ketentuan. Akun akan aktif setelah disetujui oleh admin.</p>
+      </div>
+      <div class="terms-section">
+        <h4>4. Status dan Akses Akun</h4>
+        <p>Semua akun akan melalui proses verifikasi admin. Admin berhak menerima atau menolak pendaftaran dan berhak mencabut akses akun kapan saja. Jika ditolak atau dicabut, pengguna akan diberitahu melalui email.</p>
+      </div>
+      <div class="terms-section">
+        <h4>5. Penggunaan Layanan</h4>
+        <p>Pengguna dilarang menyalahgunakan sistem, melakukan manipulasi data, mengakses sistem tanpa izin, atau mengganggu pengguna lain.</p>
+      </div>
+      <div class="terms-section">
+        <h4>6. Sistem Kuis dan Mapel</h4>
+        <p>Akses mapel diatur berdasarkan waktu yang ditentukan. Sistem dapat membuka dan menutup akses secara otomatis. Pengguna wajib mengikuti aturan kuis yang berlaku.</p>
+      </div>
+      <div class="terms-section">
+        <h4>7. Sistem Rating</h4>
+        <p>Setiap pengguna hanya boleh memberikan satu rating. Rating bersifat publik dan dapat dilihat semua pengguna. Pengguna dapat mengedit atau menghapus rating miliknya dan bertanggung jawab atas komentar yang diberikan.</p>
+      </div>
+      <div class="terms-section terms-highlight">
+        <h4>8. Ketentuan Khusus Kelas 8F</h4>
+        <p>Website ini diprioritaskan untuk kelas 8F. Seluruh materi, soal, dan kisi-kisi bersifat rahasia. Dilarang membagikan materi ke kelas lain, menyebarkan soal atau jawaban, atau menyalin konten tanpa izin. Pelanggaran akan mengakibatkan pencabutan akses dan pemblokiran akun.</p>
+      </div>
+      <div class="terms-section">
+        <h4>9. Hak Admin</h4>
+        <p>Admin berhak mengelola sistem dan data, menghapus konten, serta menonaktifkan akun yang melanggar ketentuan.</p>
+      </div>
+      <div class="terms-section">
+        <h4>10. Ketersediaan Layanan</h4>
+        <p>Layanan disediakan apa adanya dan tidak menjamin bebas dari gangguan atau error.</p>
+      </div>
+      <div class="terms-section">
+        <h4>11. Batasan Tanggung Jawab</h4>
+        <p>Pengguna bertanggung jawab atas penggunaan akun masing-masing. Admin tidak bertanggung jawab atas kerugian akibat penggunaan layanan.</p>
+      </div>
+      <div class="terms-section">
+        <h4>12. Perubahan Ketentuan</h4>
+        <p>Ketentuan dapat diubah sewaktu-waktu dan berlaku sejak dipublikasikan.</p>
+      </div>
+      <div class="terms-section">
+        <h4>13. Penutup</h4>
+        <p>Dengan menggunakan website ini, pengguna dianggap menyetujui seluruh ketentuan yang berlaku dan wajib menjaga kerahasiaan materi.</p>
+      </div>
+    </div>
+    <div class="modal-footer" style="margin-top:16px;flex-shrink:0">
+      <button class="btn btn-ghost" onclick="closeModal('modal-terms')">Tutup</button>
+      <button class="btn btn-primary" onclick="acceptTermsFromModal()">Saya Setuju</button>
+    </div>
+  </div>
+</div>
+
+<!-- REJECT REASON MODAL -->
+<div class="modal-bg" id="modal-reject-reason">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-reject-reason')">x</button>
+    <h3 class="modal-title" id="reject-modal-title">Tolak Akun</h3>
+    <p class="modal-body" id="reject-modal-desc">Masukkan alasan penolakan. Alasan ini akan dikirimkan ke email pengguna.</p>
+    <div class="field">
+      <label>Alasan (opsional tapi dianjurkan)</label>
+      <textarea id="reject-reason-input" rows="3" placeholder="Contoh: Data yang diberikan tidak valid, silakan daftar ulang dengan data yang benar."></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-reject-reason')">Batal</button>
+      <button class="btn btn-danger" id="btn-confirm-reject" onclick="confirmRejectAction()">Konfirmasi</button>
+    </div>
+  </div>
+</div>
+
 <!-- MAPEL -->
 <div class="modal-bg" id="modal-mapel">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('modal-mapel')">✕</button>
+    <button class="modal-close" onclick="closeModal('modal-mapel')">x</button>
     <h3 class="modal-title" id="mapel-modal-title">Tambah Mata Pelajaran</h3>
     <div class="field"><label>Nama Mata Pelajaran</label><input type="text" id="mapel-form-nama" placeholder="Contoh: Matematika"></div>
-    <div class="field"><label>Icon (emoji)</label><input type="text" id="mapel-form-icon" placeholder="📚" maxlength="4"></div>
+    <div class="field"><label>Icon (huruf/karakter)</label><input type="text" id="mapel-form-icon" placeholder="M" maxlength="4"></div>
     <div class="form-row-2">
       <div class="field"><label>Warna Mulai</label><input type="color" id="mapel-form-from" value="#4f8ef7"></div>
       <div class="field"><label>Warna Akhir</label><input type="color" id="mapel-form-to" value="#9b7ef8"></div>
     </div>
     <div class="field"><label>Urutan</label><input type="number" id="mapel-form-urutan" placeholder="0" min="0"></div>
+    <div style="margin:14px 0 6px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Jadwal Otomatis (opsional)</div>
+    <div style="font-size:12px;color:var(--dim);margin-bottom:10px;line-height:1.5">Jika diisi, mapel akan otomatis terbuka/tutup sesuai waktu. Kosongkan untuk kontrol manual via toggle.</div>
+    <div class="form-row-2">
+      <div class="field"><label>Waktu Buka</label><input type="datetime-local" id="mapel-form-waktu-buka"></div>
+      <div class="field"><label>Waktu Tutup (opsional)</label><input type="datetime-local" id="mapel-form-waktu-tutup"></div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-mapel')">Batal</button>
       <button class="btn btn-primary" id="btn-save-mapel" onclick="saveMapel()">Simpan</button>
@@ -443,23 +613,23 @@
 <!-- KISI-KISI -->
 <div class="modal-bg" id="modal-kisi">
   <div class="modal modal-lg">
-    <button class="modal-close" onclick="closeModal('modal-kisi')">✕</button>
+    <button class="modal-close" onclick="closeModal('modal-kisi')">x</button>
     <h3 class="modal-title" id="kisi-modal-title">Tambah Kisi-kisi</h3>
     <div class="field"><label>Judul</label><input type="text" id="kisi-form-judul" placeholder="Judul materi atau soal"></div>
     <div class="form-row-2">
       <div class="field">
         <label>Tipe</label>
         <select id="kisi-form-tipe">
-          <option value="materi">📖 Materi</option>
-          <option value="soal">❓ Soal</option>
-          <option value="catatan">📌 Catatan</option>
+          <option value="materi">Materi</option>
+          <option value="soal">Soal</option>
+          <option value="catatan">Catatan</option>
         </select>
       </div>
       <div class="field"><label>Urutan</label><input type="number" id="kisi-form-urutan" placeholder="0" min="0"></div>
     </div>
     <div class="field">
       <label>Konten (Markdown)</label>
-      <textarea id="kisi-form-konten" placeholder="Tulis konten di sini...&#10;&#10;Gunakan **bold**, *italic*, ## Judul, - list, > blockquote, dll." rows="10"></textarea>
+      <textarea id="kisi-form-konten" placeholder="Tulis konten di sini..." rows="10"></textarea>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-kisi')">Batal</button>
@@ -468,36 +638,29 @@
   </div>
 </div>
 
-<!-- SOAL (MCQ/Multiple/Essay) -->
+<!-- SOAL -->
 <div class="modal-bg" id="modal-soal">
   <div class="modal modal-lg">
-    <button class="modal-close" onclick="closeModal('modal-soal')">✕</button>
+    <button class="modal-close" onclick="closeModal('modal-soal')">x</button>
     <h3 class="modal-title" id="soal-modal-title">Tambah Soal</h3>
-
-    <!-- Tipe soal -->
     <div style="margin-bottom:18px">
       <div class="field-label">Tipe Soal</div>
       <div class="type-selector">
-        <button class="type-btn active" id="stype-mcq"      onclick="setSoalType('mcq')">🔵 Pilihan Ganda</button>
-        <button class="type-btn"        id="stype-multiple" onclick="setSoalType('multiple')">☑️ Pilihan Kompleks</button>
-        <button class="type-btn"        id="stype-essay"    onclick="setSoalType('essay')">✏️ Isian/Essay</button>
+        <button class="type-btn active" id="stype-mcq"      onclick="setSoalType('mcq')">Pilihan Ganda</button>
+        <button class="type-btn"        id="stype-multiple" onclick="setSoalType('multiple')">Pilihan Kompleks</button>
+        <button class="type-btn"        id="stype-essay"    onclick="setSoalType('essay')">Isian / Essay</button>
       </div>
     </div>
-
-    <div class="field"><label>Teks Soal *</label><textarea id="soal-form-text" rows="3" placeholder="Tulis pertanyaan di sini..."></textarea></div>
-
-    <!-- Pilihan jawaban -->
+    <div class="field"><label>Teks Soal</label><textarea id="soal-form-text" rows="3" placeholder="Tulis pertanyaan di sini..."></textarea></div>
     <div id="soal-options-section">
-      <div class="field-label" id="soal-options-label">Pilihan Jawaban * (centang 1 benar)</div>
+      <div class="field-label" id="soal-options-label">Pilihan Jawaban (centang 1 benar)</div>
       <div id="soal-options-list"></div>
-      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addSoalOpt()">＋ Tambah Pilihan</button>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addSoalOpt()">Tambah Pilihan</button>
     </div>
-
     <div class="field" style="margin-top:14px">
       <label id="soal-exp-label">Pembahasan (Opsional)</label>
       <textarea id="soal-form-exp" rows="2" placeholder="Penjelasan jawaban benar..."></textarea>
     </div>
-
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-soal')">Batal</button>
       <button class="btn btn-primary" id="btn-save-soal" onclick="saveSoal()">Simpan Soal</button>
@@ -508,18 +671,17 @@
 <!-- LEADERBOARD MODAL -->
 <div class="modal-bg" id="modal-leaderboard">
   <div class="modal modal-lg">
-    <button class="modal-close" onclick="closeModal('modal-leaderboard')">✕</button>
+    <button class="modal-close" onclick="closeModal('modal-leaderboard')">x</button>
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-      <span style="font-size:28px">🏆</span>
       <div>
         <h3 class="modal-title" style="margin:0">Top Leaderboard</h3>
-        <p style="font-size:12px;color:var(--muted);margin:0">Jawaban tercepat & paling benar</p>
+        <p style="font-size:12px;color:var(--muted);margin:0">Jawaban tercepat dan paling benar</p>
       </div>
     </div>
     <div class="field" style="margin-bottom:16px">
       <label>Filter Mata Pelajaran</label>
       <select id="lb-mapel-filter" onchange="loadLeaderboard()">
-        <option value="">🏅 Semua Mata Pelajaran</option>
+        <option value="">Semua Mata Pelajaran</option>
       </select>
     </div>
     <div id="leaderboard-content">
@@ -533,25 +695,26 @@
 <!-- RATING MODAL -->
 <div class="modal-bg" id="modal-rating">
   <div class="modal" style="text-align:center">
-    <div class="rating-modal-icon">🎉</div>
-    <h3 class="modal-title">Quiz Selesai!</h3>
-    <p class="modal-body" id="rating-quiz-result" style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:4px">—</p>
+    <button class="modal-close" onclick="closeRatingModal()">x</button>
+    <div class="rating-modal-icon">+</div>
+    <h3 class="modal-title" id="modal-rating-title">Beri Penilaian</h3>
+    <p class="modal-body" id="rating-quiz-result" style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:4px;display:none">—</p>
     <p class="modal-body" style="margin-bottom:24px">Bagaimana pengalaman belajar Anda di <strong>KisiKisi 8F</strong>?</p>
 
     <div class="star-rating-row" id="star-rating-row">
-      <button class="star-btn" data-val="1" onclick="setRatingStar(1)">★</button>
-      <button class="star-btn" data-val="2" onclick="setRatingStar(2)">★</button>
-      <button class="star-btn" data-val="3" onclick="setRatingStar(3)">★</button>
-      <button class="star-btn" data-val="4" onclick="setRatingStar(4)">★</button>
-      <button class="star-btn" data-val="5" onclick="setRatingStar(5)">★</button>
+      <button class="star-btn" data-val="1" onclick="setRatingStar(1)">&#9733;</button>
+      <button class="star-btn" data-val="2" onclick="setRatingStar(2)">&#9733;</button>
+      <button class="star-btn" data-val="3" onclick="setRatingStar(3)">&#9733;</button>
+      <button class="star-btn" data-val="4" onclick="setRatingStar(4)">&#9733;</button>
+      <button class="star-btn" data-val="5" onclick="setRatingStar(5)">&#9733;</button>
     </div>
     <div class="star-label" id="star-label">Ketuk bintang untuk memberi nilai</div>
 
     <div id="rating-comment-wrap" style="margin-top:18px;text-align:left;display:none">
       <label style="font-size:13px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">
-        💬 Komentar <span style="font-weight:400;color:var(--muted)">(opsional)</span>
+        Komentar <span style="font-weight:400;color:var(--muted)">(opsional)</span>
       </label>
-      <textarea id="rating-comment" rows="3" placeholder="Ceritakan pengalaman Anda... saran, kritik, atau kesan." style="width:100%;background:var(--surface-2);border:1px solid var(--border-m);border-radius:10px;color:var(--text);padding:12px;font-size:13px;resize:vertical;font-family:inherit"></textarea>
+      <textarea id="rating-comment" rows="3" placeholder="Ceritakan pengalaman Anda — saran, kritik, atau kesan." style="width:100%;background:var(--surface-2);border:1px solid var(--border-m);border-radius:10px;color:var(--text);padding:12px;font-size:13px;resize:vertical;font-family:inherit"></textarea>
     </div>
 
     <div class="modal-footer" style="margin-top:20px">

@@ -112,14 +112,14 @@ function showPage(id) {
 
 // ── TOAST ─────────────────────────────────────────────────
 function showToast(title, msg, type = 'info') {
-  const icons = { success:'✅', error:'❌', warning:'⚠️', info:'ℹ️' };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span class="t-icon">${icons[type]||'ℹ️'}</span>
-    <div><div class="t-title">${esc(title)}</div><div class="t-msg">${esc(msg)}</div></div>
-    <button class="t-close" onclick="this.parentElement.remove()">✕</button>`;
+  el.innerHTML = `<div class="t-type-bar"></div>
+    <div class="t-body"><div class="t-title">${esc(title)}</div><div class="t-msg">${esc(msg)}</div></div>
+    <button class="t-close" onclick="this.closest('.toast').remove()">×</button>`;
   const tc = q('toast-container');
   if (tc) tc.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 280); }, 4500);
 }
 
@@ -315,21 +315,30 @@ async function initApp(session) {
 function routeProfile(p) {
   hideAppLoading();
   if (p.role === 'admin') {
-    showToast('Selamat Datang', `Admin ${p.nama_lengkap} ✦`, 'success');
+    showToast('Selamat Datang', `Admin ${p.nama_lengkap}`, 'success');
     initAdmin(); showPage('page-admin');
   } else if (p.status === 'approved') {
-    showToast('Halo!', `Selamat datang, ${p.nama_lengkap} 👋`, 'success');
+    showToast('Halo', `Selamat datang, ${p.nama_lengkap}`, 'success');
     initDashboard(); showPage('page-dashboard');
   } else if (p.status === 'pending') {
-    // Tampilkan nama di halaman pending
     const nameEl = q('pending-name');
     if (nameEl) nameEl.textContent = p.nama_lengkap;
     const emailEl = q('pending-email');
     if (emailEl) emailEl.textContent = p.email;
     showPage('page-pending');
-    // Realtime: otomatis redirect saat admin approve/reject
     startPendingListener(p.user_id);
   } else {
+    // Tampilkan alasan penolakan jika ada
+    const reasonBox  = q('rejection-reason-box');
+    const reasonText = q('rejection-reason-text');
+    if (reasonBox && reasonText) {
+      if (p.rejection_reason) {
+        reasonText.textContent = p.rejection_reason;
+        reasonBox.style.display = 'block';
+      } else {
+        reasonBox.style.display = 'none';
+      }
+    }
     showPage('page-rejected');
   }
 }
@@ -416,14 +425,26 @@ async function handleRegister(e) {
   const nama  = q('reg-nama').value.trim();
   const email = q('reg-email').value.trim();
   const pw    = q('reg-password').value;
+  const kelas = q('reg-kelas')?.value || '8F';
 
   if (pw.length < 6) { showToast('Error', 'Password minimal 6 karakter.', 'error'); return; }
+  if (!kelas) { showToast('Error', 'Pilih kelas terlebih dahulu.', 'error'); return; }
   if (selectedRole === 'admin' && q('reg-secret')?.value.trim() !== ADMIN_SECRET_CODE) {
     showToast('Kode Salah', 'Kode rahasia admin tidak valid.', 'error'); return;
   }
 
+  // Validasi terms checkbox
+  const termsChecked = q('reg-terms')?.checked;
+  const termsErr = q('terms-error');
+  if (!termsChecked) {
+    if (termsErr) termsErr.style.display = 'block';
+    showToast('Perlu Persetujuan', 'Centang Syarat dan Ketentuan untuk melanjutkan.', 'warning');
+    return;
+  }
+  if (termsErr) termsErr.style.display = 'none';
+
   setLoading(btn, true);
-  const res = await initiateRegister(nama, email, pw, '8F', selectedRole);
+  const res = await initiateRegister(nama, email, pw, kelas, selectedRole, true);
   setLoading(btn, false);
 
   if (!res.success) { showToast('Error', res.error, 'error'); return; }
@@ -518,12 +539,19 @@ async function initDashboard() {
     q('dash-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase();
     const h = new Date().getHours();
     q('dash-greeting').textContent =
-      h < 11 ? 'Selamat Pagi ☀️' : h < 15 ? 'Selamat Siang 🌤️' : h < 18 ? 'Selamat Sore 🌅' : 'Selamat Malam 🌙';
+      h < 11 ? 'Selamat Pagi' : h < 15 ? 'Selamat Siang' : h < 18 ? 'Selamat Sore' : 'Selamat Malam';
+    const kelasEl = q('stat-kelas');
+    if (kelasEl) kelasEl.textContent = p.kelas || '8F';
   }
   await loadMapel();
   rtMapel(() => { cacheDel('mapel:'); loadMapel(); });
   rtBroadcast(broadcast => showBroadcastModal(broadcast));
-  // Presence tracking
+  // Realtime ratings untuk update rata-rata di dashboard
+  rtRatings(() => {
+    // Jika halaman rating sedang aktif, refresh
+    if (q('page-rating')?.classList.contains('active')) loadPublicRatings();
+    if (q('admin-ratings')?.style.display !== 'none') loadAdminRatings();
+  });
   startPresenceTracking('dashboard');
 }
 
@@ -548,30 +576,58 @@ async function loadMapel() {
     </div>`; return;
   }
 
-  const avail = (data||[]).filter(m => !m.is_locked).length;
-  const te = q('stat-total'); if (te) te.textContent = (data||[]).length;
+  // Hitung status terbuka/terkunci berdasarkan jadwal + is_locked
+  const now = Date.now();
+  const processed = (data||[]).map(m => {
+    let isOpen = m._open !== undefined ? m._open : !m.is_locked;
+    let lockMsg = '';
+    if (m.waktu_buka && !isOpen) {
+      const buka = new Date(m.waktu_buka);
+      lockMsg = `Buka ${buka.toLocaleString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
+    }
+    if (m.waktu_tutup && isOpen && new Date(m.waktu_tutup).getTime() > now) {
+      const tutup = new Date(m.waktu_tutup);
+      lockMsg = `Tutup ${tutup.toLocaleString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
+    }
+    return { ...m, isOpen, lockMsg };
+  });
+
+  const avail = processed.filter(m => m.isOpen).length;
+  const te = q('stat-total'); if (te) te.textContent = processed.length;
   const ae = q('stat-avail'); if (ae) ae.textContent = avail;
 
-  if (!(data||[]).length) {
+  if (!processed.length) {
     grid.innerHTML = `<div class="empty-full" style="grid-column:1/-1"><div class="e-icon">📭</div><p>Belum ada mata pelajaran.</p></div>`;
     return;
   }
 
-  grid.innerHTML = data.map((m, i) => `
-    <div class="mapel-card ${m.is_locked?'locked':''}"
-      onclick="${m.is_locked ? `showLockedMsg('${esc(m.nama)}')` : `showDisclaimer('${m.id}','${esc(m.nama)}','${m.icon}')`}"
+  grid.innerHTML = processed.map((m, i) => `
+    <div class="mapel-card ${m.isOpen?'':'locked'}"
+      onclick="${m.isOpen ? `showDisclaimer('${m.id}','${esc(m.nama)}','${m.icon}')` : `showLockedMsg('${esc(m.nama)}','${esc(m.lockMsg)}')`}"
       style="animation-delay:${i*.045}s;--card-accent:linear-gradient(135deg,${m.color_from},${m.color_to})"
-      title="${m.is_locked?'Terkunci':'Buka kisi-kisi'}">
-      ${m.is_locked ? '<span class="mapel-lock">🔒</span>' : ''}
+      title="${m.isOpen?'Buka kisi-kisi':'Terkunci'}">
+      ${m.isOpen ? '' : '<span class="mapel-lock-icon"></span>'}
       <span class="mapel-icon">${m.icon}</span>
       <div class="mapel-name">${esc(m.nama)}</div>
-      <div class="mapel-status ${m.is_locked?'lock':'avail'}">
-        <span class="mapel-dot"></span>${m.is_locked?'Terkunci':'Tersedia'}
+      <div class="mapel-status ${m.isOpen?'avail':'lock'}">
+        <span class="mapel-dot"></span>${m.isOpen ? 'Tersedia' : (m.lockMsg || 'Terkunci')}
       </div>
     </div>`).join('');
+
+  // Auto-refresh setiap 60 detik untuk update status jadwal otomatis
+  clearTimeout(_mapelRefreshTimer);
+  _mapelRefreshTimer = setTimeout(() => {
+    cacheDel('mapel:');
+    loadMapel();
+  }, 60000);
 }
 
-function showLockedMsg(nama) { showToast('Terkunci 🔒', `${nama} belum dibuka oleh admin.`, 'warning'); }
+let _mapelRefreshTimer = null;
+
+function showLockedMsg(nama, msg) {
+  const detail = msg || 'Belum dibuka oleh admin.';
+  showToast('Terkunci 🔒', `${nama} — ${detail}`, 'warning');
+}
 
 // ── DISCLAIMER ────────────────────────────────────────────
 function showDisclaimer(id, nama, icon) {
@@ -800,7 +856,11 @@ function initAdmin() {
     q('admin-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase();
   }
   loadAdminStats(); loadUsers(); adminSection('users');
-  rtProfiles(() => { loadAdminStats(); loadUsers(); showToast('Update','Data pengguna berubah.','info'); });
+  rtProfiles(() => { loadAdminStats(); loadUsers(); showToast('Update', 'Data pengguna berubah.', 'info'); });
+  rtRatings(() => {
+    if (q('admin-ratings')?.style.display !== 'none') loadAdminRatings();
+    if (q('page-rating')?.classList.contains('active')) loadPublicRatings();
+  });
   rtBroadcast(b => showBroadcastModal(b));
 }
 
@@ -845,38 +905,102 @@ function renderUsersTable(data) {
   if (!data.length) { tbody.innerHTML = `<tr><td colspan="6" class="td-empty">Belum ada pengguna.</td></tr>`; return; }
   tbody.innerHTML = data.map(u => {
     const isAdmin = u.role === 'admin';
-    const actions = isAdmin ? `<span style="color:var(--dim)">—</span>` : `<div class="acts">
-      ${u.status !== 'approved' ? `<button class="btn btn-success btn-sm" title="Setujui" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">✓ Setujui</button>` : ''}
-      ${u.status !== 'pending'  ? `<button class="btn btn-ghost btn-sm" title="Pending" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">⏳</button>` : ''}
-      <button class="btn btn-danger btn-sm" title="Tolak & Hapus" onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">✕ Tolak</button>
-    </div>`;
+    let actions;
+    if (isAdmin) {
+      actions = `<span style="color:var(--dim)">—</span>`;
+    } else if (u.status === 'rejected') {
+      actions = `<div class="acts">
+        <button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">Setujui</button>
+        <button class="btn btn-ghost btn-sm" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">Pending</button>
+      </div>`;
+    } else {
+      actions = `<div class="acts">
+        ${u.status !== 'approved' ? `<button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">Setujui</button>` : ''}
+        ${u.status !== 'pending'  ? `<button class="btn btn-ghost btn-sm" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">Pending</button>` : ''}
+        ${u.status === 'approved' ? `<button class="btn btn-danger btn-sm" onclick="setStatus('${u.id}','revoke','${esc(u.nama_lengkap)}')">Cabut</button>` : ''}
+        ${u.status === 'pending'  ? `<button class="btn btn-danger btn-sm" onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">Tolak</button>` : ''}
+      </div>`;
+    }
+    const rejReason = u.rejection_reason
+      ? `<div style="font-size:10px;color:var(--red);margin-top:2px">${esc(u.rejection_reason.substring(0,40))}${u.rejection_reason.length>40?'...':''}</div>` : '';
     return `<tr>
       <td><div class="u-cell">
         <div class="avatar" style="width:32px;height:32px;font-size:11px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
         <div><div class="u-name">${esc(u.nama_lengkap)}</div><div class="u-email">${esc(u.email)}</div></div>
       </div></td>
-      <td>${esc(u.kelas)}</td>
+      <td>${esc(u.kelas || '—')}</td>
       <td><span class="badge ${isAdmin ? 'b-admin' : 'b-siswa'}">${u.role}</span></td>
-      <td><span class="badge b-${u.status}">${u.status}</span></td>
+      <td><span class="badge b-${u.status}">${u.status}</span>${rejReason}</td>
       <td class="td-date hide-sm">${fmtDate(u.created_at)}</td>
       <td>${actions}</td>
     </tr>`;
   }).join('');
 }
 
+// ── State untuk reject modal ──────────────────────────────
+let _rejectTargetId = null, _rejectTargetNama = null, _rejectAction = null;
+
+function openRejectModal(id, nama, action) {
+  _rejectTargetId   = id;
+  _rejectTargetNama = nama;
+  _rejectAction     = action; // 'rejected' | 'revoke'
+  q('reject-modal-title').textContent  = action === 'revoke' ? 'Cabut Akses' : 'Tolak Akun';
+  q('reject-modal-desc').textContent   = action === 'revoke'
+    ? `Cabut akses "${nama}"? User tidak dapat login lagi. Alasan akan dikirim ke email.`
+    : `Tolak pendaftaran "${nama}"? Alasan akan dikirim ke email user.`;
+  q('reject-reason-input').value = '';
+  openModal('modal-reject-reason');
+}
+
+async function confirmRejectAction() {
+  const reason = q('reject-reason-input')?.value.trim() || '';
+  if (!_rejectTargetId || !_rejectAction) return;
+
+  const btn = q('btn-confirm-reject');
+  setLoading(btn, true);
+
+  if (_rejectAction === 'rejected') {
+    // Tolak: set status rejected + simpan alasan
+    const res = await updateUserStatus(_rejectTargetId, 'rejected', reason || null);
+    setLoading(btn, false);
+    closeModal('modal-reject-reason');
+    if (res.success) {
+      // Kirim email penolakan
+      const user = allUsers.find(u => u.id === _rejectTargetId);
+      if (user) _sendStatusEmail(EMAILJS_TEMPLATE_REJECT, user.email, user.nama_lengkap, reason);
+      showToast('Berhasil', `Akun ${_rejectTargetNama} ditolak.`, 'warning');
+      loadUsers(); loadAdminStats();
+    } else { showToast('Error', res.error, 'error'); }
+  } else if (_rejectAction === 'revoke') {
+    // Cabut akses: set rejected + simpan alasan
+    const res = await updateUserStatus(_rejectTargetId, 'rejected', reason || null);
+    setLoading(btn, false);
+    closeModal('modal-reject-reason');
+    if (res.success) {
+      const user = allUsers.find(u => u.id === _rejectTargetId);
+      if (user) _sendStatusEmail(EMAILJS_TEMPLATE_REVOKE, user.email, user.nama_lengkap, reason);
+      showToast('Berhasil', `Akses ${_rejectTargetNama} dicabut.`, 'warning');
+      loadUsers(); loadAdminStats();
+    } else { showToast('Error', res.error, 'error'); }
+  }
+}
+
 async function setStatus(id, status, nama) {
   if (status === 'rejected') {
-    if (!confirm(`Tolak & hapus akun "${nama}"?\n\nAkun yang ditolak akan dihapus permanen.`)) return;
-    const res = await deleteUserProfile(id);
-    if (res.success) { showToast('Dihapus', `Akun ${nama} dihapus.`, 'warning'); loadUsers(); loadAdminStats(); }
-    else showToast('Error', res.error, 'error');
+    openRejectModal(id, nama, 'rejected');
+    return;
+  }
+  if (status === 'revoke') {
+    openRejectModal(id, nama, 'revoke');
     return;
   }
   const res = await updateUserStatus(id, status);
-  const labels = { approved: 'Disetujui ✅', pending: 'Ke Pending' };
+  const labels = { approved: 'Disetujui', pending: 'Ke Pending' };
   const types  = { approved: 'success', pending: 'info' };
-  if (res.success) { showToast('Berhasil', `${nama} — ${labels[status]}`, types[status]); loadUsers(); loadAdminStats(); }
-  else showToast('Error', res.error, 'error');
+  if (res.success) {
+    showToast('Berhasil', `${nama} — ${labels[status]}`, types[status]);
+    loadUsers(); loadAdminStats();
+  } else showToast('Error', res.error, 'error');
 }
 
 function searchUsers(val) {
@@ -892,28 +1016,35 @@ async function loadAdminMapel() {
   const { data } = await getMapel(); if (!data) return;
   grid.innerHTML = !data.length
     ? `<div class="empty-full" style="grid-column:1/-1"><div class="e-icon">📭</div><p>Belum ada mapel.</p></div>`
-    : data.map(m => `
-    <div class="mapel-mgr-card">
-      <div class="mapel-mgr-top">
-        <div class="mapel-mgr-info">
-          <span class="mapel-mgr-icon">${m.icon}</span>
-          <div>
-            <div class="mapel-mgr-name">${esc(m.nama)}</div>
-            <div class="mapel-mgr-status">Status: <span style="color:${m.is_locked?'var(--red)':'var(--green)'}">
-              ${m.is_locked?'🔒 Terkunci':'✅ Tersedia'}</span></div>
+    : data.map(m => {
+        const hasSchedule = !!m.waktu_buka;
+        const schedLabel  = hasSchedule
+          ? `⏰ Jadwal: ${new Date(m.waktu_buka).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}${m.waktu_tutup?' – '+new Date(m.waktu_tutup).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}`
+          : '';
+        return `
+        <div class="mapel-mgr-card">
+          <div class="mapel-mgr-top">
+            <div class="mapel-mgr-info">
+              <span class="mapel-mgr-icon">${m.icon}</span>
+              <div>
+                <div class="mapel-mgr-name">${esc(m.nama)}</div>
+                <div class="mapel-mgr-status">Status: <span style="color:${m.is_locked?'var(--red)':'var(--green)'}">
+                  ${m.is_locked?'🔒 Terkunci':'✅ Tersedia'}</span></div>
+                ${schedLabel ? `<div style="font-size:11px;color:var(--amber);margin-top:2px">${schedLabel}</div>` : ''}
+              </div>
+            </div>
+            <label class="toggle" title="${hasSchedule?'Ada jadwal otomatis':'Toggle manual'}">
+              <input type="checkbox" ${!m.is_locked?'checked':''} onchange="toggleMapel('${m.id}',this.checked)" ${hasSchedule?'style="opacity:.5"':''}>
+              <span class="toggle-track"></span>
+            </label>
           </div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" ${!m.is_locked?'checked':''} onchange="toggleMapel('${m.id}',this.checked)">
-          <span class="toggle-track"></span>
-        </label>
-      </div>
-      <div class="mapel-mgr-actions">
-        <button class="btn btn-ghost btn-sm" onclick="openEditMapel('${m.id}','${esc(m.nama)}','${m.icon}','${m.color_from}','${m.color_to}',${m.urutan})">✏️ Edit</button>
-        <button class="btn btn-ghost btn-sm" onclick="openSoalForMapel('${m.id}')">📝 Soal</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteMapelConfirm('${m.id}','${esc(m.nama)}')">🗑️</button>
-      </div>
-    </div>`).join('');
+          <div class="mapel-mgr-actions">
+            <button class="btn btn-ghost btn-sm" onclick="openEditMapel(${JSON.stringify(m).replace(/"/g,'&quot;')})">✏️ Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="openSoalForMapel('${m.id}')">📝 Soal</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteMapelConfirm('${m.id}','${esc(m.nama)}')">🗑️</button>
+          </div>
+        </div>`;
+      }).join('');
 }
 
 async function toggleMapel(id, enabled) {
@@ -927,33 +1058,52 @@ function openAddMapel() {
   q('mapel-modal-title').textContent='Tambah Mata Pelajaran';
   q('mapel-form-nama').value=''; q('mapel-form-icon').value='📚';
   q('mapel-form-from').value='#4f8ef7'; q('mapel-form-to').value='#9b7ef8';
-  q('mapel-form-urutan').value='0'; openModal('modal-mapel');
+  q('mapel-form-urutan').value='0';
+  q('mapel-form-waktu-buka').value=''; q('mapel-form-waktu-tutup').value='';
+  openModal('modal-mapel');
 }
-function openEditMapel(id,nama,icon,from_,to_,urutan) {
-  editingMapelId=id;
+
+// openEditMapel sekarang menerima objek mapel lengkap
+function openEditMapel(m) {
+  if (typeof m === 'string') { showToast('Error','Data mapel tidak valid.','error'); return; }
+  editingMapelId = m.id;
   q('mapel-modal-title').textContent='Edit Mata Pelajaran';
-  q('mapel-form-nama').value=nama; q('mapel-form-icon').value=icon;
-  q('mapel-form-from').value=from_; q('mapel-form-to').value=to_;
-  q('mapel-form-urutan').value=urutan; openModal('modal-mapel');
+  q('mapel-form-nama').value   = m.nama;
+  q('mapel-form-icon').value   = m.icon;
+  q('mapel-form-from').value   = m.color_from;
+  q('mapel-form-to').value     = m.color_to;
+  q('mapel-form-urutan').value = m.urutan;
+  // Format datetime-local: 2025-06-01T08:00
+  const toLocal = iso => iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16) : '';
+  q('mapel-form-waktu-buka').value  = toLocal(m.waktu_buka);
+  q('mapel-form-waktu-tutup').value = toLocal(m.waktu_tutup);
+  openModal('modal-mapel');
 }
+
 async function saveMapel() {
-  const nama=q('mapel-form-nama').value.trim(), icon=q('mapel-form-icon').value.trim()||'📚';
-  const from_=q('mapel-form-from').value, to_=q('mapel-form-to').value;
-  const urutan=parseInt(q('mapel-form-urutan').value)||0;
+  const nama   = q('mapel-form-nama').value.trim();
+  const icon   = q('mapel-form-icon').value.trim() || '📚';
+  const from_  = q('mapel-form-from').value;
+  const to_    = q('mapel-form-to').value;
+  const urutan = parseInt(q('mapel-form-urutan').value) || 0;
+  const wbVal  = q('mapel-form-waktu-buka').value;
+  const wtVal  = q('mapel-form-waktu-tutup').value;
+  const waktu_buka  = wbVal  ? new Date(wbVal).toISOString()  : null;
+  const waktu_tutup = wtVal  ? new Date(wtVal).toISOString()  : null;
+
   if (!nama) { showToast('Error','Nama mapel wajib diisi.','error'); return; }
-  const btn=q('btn-save-mapel'); setLoading(btn,true);
+  if (waktu_buka && waktu_tutup && new Date(waktu_tutup) <= new Date(waktu_buka)) {
+    showToast('Error','Waktu tutup harus setelah waktu buka.','error'); return;
+  }
+
+  const btn = q('btn-save-mapel'); setLoading(btn,true);
+  const payload = { nama, icon, color_from:from_, color_to:to_, urutan, waktu_buka, waktu_tutup };
   const res = editingMapelId
-    ? await updateMapel(editingMapelId,{nama,icon,color_from:from_,color_to:to_,urutan})
-    : await createMapel({nama,icon,color_from:from_,color_to:to_,urutan,is_locked:true});
+    ? await updateMapel(editingMapelId, payload)
+    : await createMapel({ ...payload, is_locked: true });
   setLoading(btn,false);
-  if (res.success) { showToast('Berhasil',editingMapelId?'Diperbarui.':'Ditambahkan.','success'); closeModal('modal-mapel'); loadAdminMapel(); }
+  if (res.success) { showToast('Berhasil',editingMapelId?'Diperbarui.':'Ditambahkan.','success'); closeModal('modal-mapel'); loadAdminMapel(); cacheDel('mapel:'); }
   else showToast('Error',res.error||'Gagal.','error');
-}
-async function deleteMapelConfirm(id,nama) {
-  if (!confirm(`Hapus mapel "${nama}"? Semua kisi-kisi juga terhapus.`)) return;
-  const res = await deleteMapel(id);
-  if (res.success) { showToast('Dihapus',`"${nama}" dihapus.`,'warning'); loadAdminMapel(); }
-  else showToast('Error',res.error,'error');
 }
 
 // ── SOAL ADMIN ────────────────────────────────────────────
@@ -1217,6 +1367,27 @@ document.addEventListener('click', e => {
 });
 
 // ════════════════════════════════════════════════════════════
+//  SYARAT & KETENTUAN MODAL
+// ════════════════════════════════════════════════════════════
+
+function openTermsModal() {
+  openModal('modal-terms');
+}
+
+function acceptTermsFromModal() {
+  // Centang checkbox di form yang sedang aktif
+  const regTerms    = q('reg-terms');
+  const googleTerms = q('google-terms');
+  if (regTerms)    regTerms.checked    = true;
+  if (googleTerms) googleTerms.checked = true;
+  // Sembunyikan pesan error
+  const te = q('terms-error');    if (te) te.style.display = 'none';
+  const ge = q('google-terms-error'); if (ge) ge.style.display = 'none';
+  closeModal('modal-terms');
+  showToast('Disetujui', 'Syarat dan Ketentuan telah disetujui.', 'success');
+}
+
+// ════════════════════════════════════════════════════════════
 //  BOOT — ROOT CAUSE FIX UTAMA
 // ════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
@@ -1360,10 +1531,23 @@ async function checkGoogleNewUser(session) {
 }
 
 async function submitGoogleName() {
-  const nama = q('google-nama-input')?.value.trim();
+  const nama  = q('google-nama-input')?.value.trim();
+  const kelas = q('google-kelas-input')?.value || '8F';
   if (!nama || nama.length < 2) {
     showToast('Error', 'Nama lengkap minimal 2 karakter.', 'error'); return;
   }
+  if (!kelas) {
+    showToast('Error', 'Pilih kelas terlebih dahulu.', 'error'); return;
+  }
+
+  const termsChecked = q('google-terms')?.checked;
+  const termsErr = q('google-terms-error');
+  if (!termsChecked) {
+    if (termsErr) termsErr.style.display = 'block';
+    showToast('Perlu Persetujuan', 'Centang Syarat dan Ketentuan untuk melanjutkan.', 'warning');
+    return;
+  }
+  if (termsErr) termsErr.style.display = 'none';
 
   const btn = q('btn-google-name');
   setLoading(btn, true);
@@ -1371,18 +1555,19 @@ async function submitGoogleName() {
 
   const session = _googleNameSession;
   if (!session) { hideAppLoading(); showPage('page-login'); return; }
-
   const user = session.user;
+  const now  = new Date().toISOString();
 
-  // Upsert profile dengan nama manual dan flag nama_manual=true
   const { error } = await sb.from('profiles').upsert({
-    user_id:      user.id,
-    nama_lengkap: nama,
-    email:        user.email,
-    kelas:        '8F',
-    role:         'siswa',
-    status:       'pending',
-    nama_manual:  true
+    user_id:          user.id,
+    nama_lengkap:     nama,
+    email:            user.email,
+    kelas,
+    role:             'siswa',
+    status:           'pending',
+    terms_accepted:   true,
+    terms_accepted_at: now,
+    nama_manual:      true
   }, { onConflict: 'user_id' });
 
   setLoading(btn, false);
@@ -1466,7 +1651,7 @@ async function loadLeaderboard() {
 
 const RATING_DONE_KEY = 'kisi8f_rated';
 let _selectedRating = 0;
-let _quizTimeStart  = null; // waktu mulai quiz
+let _quizTimeStart  = null;
 
 function quizStart() {
   _quizTimeStart = Date.now();
@@ -1474,7 +1659,7 @@ function quizStart() {
 
 function setRatingStar(val) {
   _selectedRating = val;
-  const labels = ['', '😞 Kurang bagus', '😐 Cukup', '😊 Lumayan', '😄 Bagus!', '🤩 Luar biasa!'];
+  const labels = ['', 'Kurang bagus', 'Cukup', 'Lumayan', 'Bagus', 'Luar biasa'];
   const stars = document.querySelectorAll('.star-btn');
   stars.forEach((s, i) => s.classList.toggle('active', i < val));
   const lbl = q('star-label'); if (lbl) lbl.textContent = labels[val] || '';
@@ -1484,12 +1669,9 @@ function setRatingStar(val) {
 }
 
 async function maybeShowRating(scoreText) {
-  // Cek localStorage dulu (offline-first)
   if (localStorage.getItem(RATING_DONE_KEY)) return;
-  // Cek database
   const rated = await hasRated();
   if (rated) { localStorage.setItem(RATING_DONE_KEY, '1'); return; }
-  // Tampilkan popup
   const resEl = q('rating-quiz-result');
   if (resEl) resEl.textContent = scoreText;
   _selectedRating = 0;
@@ -1512,22 +1694,20 @@ async function submitRating() {
 
   if (res.success) {
     localStorage.setItem(RATING_DONE_KEY, '1');
-    // Kirim email via EmailJS
     sendRatingEmail(_selectedRating, komentar);
     closeModal('modal-rating');
-    showToast('Terima kasih! 🙏', 'Penilaian Anda telah dikirim.', 'success');
+    showToast('Terima kasih', 'Penilaian Anda telah dikirim.', 'success');
   } else {
     showToast('Gagal', res.error || 'Gagal menyimpan penilaian.', 'error');
   }
 }
 
 function closeRatingModal() {
-  localStorage.setItem(RATING_DONE_KEY, '1'); // skip sekali
+  localStorage.setItem(RATING_DONE_KEY, '1');
   closeModal('modal-rating');
 }
 
 function sendRatingEmail(rating, komentar) {
-  // EmailJS — ganti YOUR_SERVICE_ID, YOUR_TEMPLATE_ID, YOUR_PUBLIC_KEY
   const EMAILJS_SERVICE  = 'service_pyimyzb';
   const EMAILJS_TEMPLATE = 'template_stf6xqs';
   const EMAILJS_KEY      = 'HAzuBBggwHvM8b1YU';
@@ -1549,6 +1729,180 @@ function sendRatingEmail(rating, komentar) {
   }).catch(err => {
     console.warn('[Email] Gagal kirim email:', err);
   });
+}
+
+// ════════════════════════════════════════════════════════════
+//  HALAMAN RATING PUBLIK — Semua orang bisa lihat
+//  Menu "Rating" di dashboard
+// ════════════════════════════════════════════════════════════
+
+let _myRatingData = null; // cache rating milik user saat ini
+
+async function openRatingPage() {
+  showPage('page-rating');
+  await loadPublicRatings();
+  // Realtime: auto-update saat ada INSERT/UPDATE/DELETE di ratings
+  rtRatings(() => loadPublicRatings());
+}
+
+async function loadPublicRatings() {
+  const summEl  = q('public-rating-summary');
+  const listEl  = q('public-rating-list');
+  const myEl    = q('my-rating-section');
+  if (!summEl || !listEl) return;
+
+  // Skeleton
+  summEl.innerHTML = `<div class="skel" style="height:80px;border-radius:14px"></div>`;
+  listEl.innerHTML = `<div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div>`.repeat(3);
+
+  const [{ data, error }, stats, myRating] = await Promise.all([
+    getAllRatings(),
+    getRatingStats(),
+    currentUser ? getMyRating() : Promise.resolve(null)
+  ]);
+
+  _myRatingData = myRating;
+
+  // ── RINGKASAN ──
+  if (!error && data.length) {
+    const fullStars = Math.round(stats.avg);
+    summEl.innerHTML = `
+      <div class="rating-summary-card">
+        <div class="rating-big-avg">${stats.avg}</div>
+        <div class="rating-big-stars">${'★'.repeat(fullStars)}${'☆'.repeat(5-fullStars)}</div>
+        <div class="rating-big-count">dari ${stats.count} penilaian</div>
+      </div>`;
+  } else {
+    summEl.innerHTML = `<div class="empty-hint" style="text-align:center;padding:20px">Belum ada penilaian.</div>`;
+  }
+
+  // ── RATING SAYA ──
+  if (myEl && currentUser) {
+    myEl.style.display = 'block';
+    if (myRating) {
+      const myStars = '★'.repeat(myRating.rating) + '☆'.repeat(5 - myRating.rating);
+      myEl.innerHTML = `
+        <div class="my-rating-card">
+          <div class="my-rating-label">Penilaian Anda</div>
+          <div class="my-rating-stars">${myStars}</div>
+          <div class="my-rating-comment">${myRating.komentar ? `"${esc(myRating.komentar)}"` : '<span style="color:var(--dim)">Tidak ada komentar</span>'}</div>
+          <div class="my-rating-date">${fmtDate(myRating.updated_at || myRating.created_at)}</div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-ghost btn-sm" onclick="openEditRatingModal()">✏️ Edit</button>
+            <button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)" onclick="confirmDeleteRating()">🗑️ Hapus</button>
+          </div>
+        </div>`;
+    } else {
+      myEl.innerHTML = `
+        <div class="my-rating-card empty">
+          <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Anda belum memberikan penilaian.</div>
+          <button class="btn btn-primary btn-sm" onclick="openAddRatingModal()">⭐ Beri Penilaian</button>
+        </div>`;
+    }
+  } else if (myEl) {
+    myEl.style.display = 'block';
+    myEl.innerHTML = `<div class="my-rating-card empty">
+      <div style="font-size:13px;color:var(--muted)">Login untuk memberi penilaian.</div>
+    </div>`;
+  }
+
+  // ── DAFTAR SEMUA RATING ──
+  if (!data || !data.length) {
+    listEl.innerHTML = `<div class="empty-hint" style="text-align:center;padding:24px 0">Belum ada penilaian.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = data.map((r, i) => {
+    const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
+    const isMe  = currentUser && r.user_id === currentUser.id;
+    return `
+      <div class="rating-item ${isMe ? 'rating-item-me' : ''}" style="animation-delay:${i*.04}s">
+        <div class="rating-item-top">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="avatar" style="width:32px;height:32px;font-size:12px">${r.nama_lengkap.charAt(0).toUpperCase()}</div>
+            <div>
+              <div class="rating-item-name">${esc(r.nama_lengkap)} ${isMe ? '<span class="rating-me-badge">(Saya)</span>' : ''}</div>
+              <div style="font-size:11px;color:var(--dim)">${fmtDate(r.created_at)}</div>
+            </div>
+          </div>
+          <div class="rating-stars">${stars}</div>
+        </div>
+        ${r.komentar ? `<div class="rating-comment">"${esc(r.komentar)}"</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+// ── Modal Tambah/Edit Rating (dari halaman Rating) ────────
+let _editingRating = false;
+
+function openAddRatingModal() {
+  _editingRating = false;
+  _selectedRating = 0;
+  document.querySelectorAll('.star-btn').forEach(s => s.classList.remove('active'));
+  const lbl = q('star-label'); if (lbl) lbl.textContent = 'Ketuk bintang untuk memberi nilai';
+  const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = 'none';
+  const btn = q('btn-submit-rating'); if (btn) { btn.disabled = true; btn.textContent = 'Kirim Penilaian'; }
+  const resEl = q('rating-quiz-result'); if (resEl) resEl.style.display = 'none';
+  const title = q('modal-rating-title'); if (title) title.textContent = 'Beri Penilaian';
+  if (q('rating-comment')) q('rating-comment').value = '';
+  openModal('modal-rating');
+}
+
+function openEditRatingModal() {
+  if (!_myRatingData) return;
+  _editingRating = true;
+  _selectedRating = _myRatingData.rating;
+  const stars = document.querySelectorAll('.star-btn');
+  stars.forEach((s, i) => s.classList.toggle('active', i < _myRatingData.rating));
+  const labels = ['', 'Kurang bagus', 'Cukup', 'Lumayan', 'Bagus', 'Luar biasa'];
+  const lbl = q('star-label'); if (lbl) lbl.textContent = labels[_myRatingData.rating] || '';
+  const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = 'block';
+  const btn = q('btn-submit-rating'); if (btn) { btn.disabled = false; btn.textContent = 'Simpan Perubahan'; }
+  const resEl = q('rating-quiz-result'); if (resEl) resEl.style.display = 'none';
+  const title = q('modal-rating-title'); if (title) title.textContent = 'Edit Penilaian';
+  if (q('rating-comment')) q('rating-comment').value = _myRatingData.komentar || '';
+  openModal('modal-rating');
+}
+
+// Override submitRating untuk support edit mode
+async function submitRating() {
+  if (!_selectedRating) return;
+  const komentar = q('rating-comment')?.value.trim() || '';
+  const btn = q('btn-submit-rating'); setLoading(btn, true);
+
+  let res;
+  if (_editingRating) {
+    res = await editRating(_selectedRating, komentar);
+  } else {
+    res = await saveSiteRating(_selectedRating, komentar);
+  }
+  setLoading(btn, false);
+
+  if (res.success) {
+    if (!_editingRating) {
+      localStorage.setItem(RATING_DONE_KEY, '1');
+      sendRatingEmail(_selectedRating, komentar);
+    }
+    closeModal('modal-rating');
+    showToast('Tersimpan', _editingRating ? 'Penilaian diperbarui.' : 'Terima kasih atas penilaian Anda.', 'success');
+    // Refresh tidak perlu dipanggil manual — realtime subscription akan trigger otomatis
+  } else {
+    showToast('Gagal', res.error || 'Gagal menyimpan penilaian.', 'error');
+  }
+}
+
+async function confirmDeleteRating() {
+  if (!confirm('Hapus penilaian Anda?')) return;
+  const res = await deleteMyRating();
+  if (res.success) {
+    _myRatingData = null;
+    localStorage.removeItem(RATING_DONE_KEY);
+    showToast('Dihapus', 'Penilaian Anda telah dihapus.', 'info');
+    loadPublicRatings();
+    if (q('admin-ratings')?.style.display !== 'none') loadAdminRatings();
+  } else {
+    showToast('Gagal', res.error, 'error');
+  }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1610,11 +1964,11 @@ async function loadAdminRatings() {
   }
 
   const avg = (data.reduce((s, r) => s + r.rating, 0) / data.length).toFixed(1);
-  const fullStars   = Math.round(avg);
-  const starsStr    = '★'.repeat(fullStars) + '☆'.repeat(5 - fullStars);
+  const fullStars = Math.round(avg);
+  const starsStr  = '★'.repeat(fullStars) + '☆'.repeat(5 - fullStars);
 
-  if (q('ratings-summary')) {
-    q('ratings-summary').innerHTML = `
+  if (summary) {
+    summary.innerHTML = `
       <div class="ratings-summary-box">
         <div class="ratings-avg">${avg}</div>
         <div class="ratings-stars-avg">${starsStr}</div>

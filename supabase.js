@@ -1,18 +1,23 @@
 // ════════════════════════════════════════════════════════════
-//  supabase.js — KisiKisi 8F  |  Optimized v4
-//  Perbaikan baru v4:
-//  1. Profile cache di localStorage → tampil instan saat reload
-//  2. Deteksi koneksi (navigator.onLine) → mode offline otomatis
-//  3. Auto-retry dengan exponential backoff saat koneksi lambat
-//  4. Fetch profil async (non-blocking) → UI tampil lebih dulu
-//  5. Semua loading berdasarkan response server nyata (no fake timeout)
-//  6. Pesan error & status koneksi yang jelas untuk user
+//  supabase.js — KisiKisi 8F  |  v8 Final Pro
+//  Perubahan:
+//  1. initiateRegister: kirim kelas + terms_accepted ke metadata
+//  2. updateUserStatus: kirim email via EmailJS saat tolak/cabut
+//  3. rtRatings: realtime INSERT/UPDATE/DELETE pada ratings
+//  4. getAllUsers: sertakan rejection_reason
+//  5. computeMapelOpen: helper client-side tetap
 // ════════════════════════════════════════════════════════════
 
 // ── CONFIG ────────────────────────────────────────────────
 const SUPABASE_URL      = 'https://ckqcpviipscapbyngepp.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_7YMEQSMDsUJTmDvYtXp0wg_A8cvKh6s';
-const ADMIN_SECRET_CODE = 'qwerty'; // ⚠️  Ganti sebelum production!
+const ADMIN_SECRET_CODE = 'qwerty'; // Ganti sebelum production!
+
+// EmailJS — ganti dengan service/template ID Anda
+const EMAILJS_SERVICE_ID  = 'YOUR_SERVICE_ID';
+const EMAILJS_TEMPLATE_REJECT = 'YOUR_TEMPLATE_REJECT'; // template: to_email, to_name, reason
+const EMAILJS_TEMPLATE_REVOKE = 'YOUR_TEMPLATE_REVOKE';
+const EMAILJS_PUBLIC_KEY  = 'YOUR_PUBLIC_KEY';
 
 // ── INIT CLIENT ───────────────────────────────────────────
 const { createClient } = supabase;
@@ -28,7 +33,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 
 // ════════════════════════════════════════════════════════════
-//  KONEKSI — Deteksi online/offline secara real-time
+//  KONEKSI
 // ════════════════════════════════════════════════════════════
 let _isOnline = navigator.onLine;
 const _connCallbacks = new Set();
@@ -39,53 +44,31 @@ function _fireConnectionChange(online) {
   _isOnline = online;
   _connCallbacks.forEach(cb => { try { cb(online); } catch(_) {} });
 }
-
-window.addEventListener('online',  () => {
-  console.log('[Net] Online — mencoba reconnect...');
-  _fireConnectionChange(true);
-});
-window.addEventListener('offline', () => {
-  console.log('[Net] Offline — masuk mode offline');
-  _fireConnectionChange(false);
-});
-
+window.addEventListener('online',  () => { console.log('[Net] Online'); _fireConnectionChange(true); });
+window.addEventListener('offline', () => { console.log('[Net] Offline'); _fireConnectionChange(false); });
 const isOnline = () => _isOnline;
 
 // ════════════════════════════════════════════════════════════
-//  PROFILE CACHE — localStorage (persist antar session reload)
-//  Key: profile:<userId>  Value: { data, ts }
-//  TTL: 5 menit — hanya untuk mempercepat tampilan awal
+//  PROFILE CACHE (localStorage, TTL 5 menit)
 // ════════════════════════════════════════════════════════════
 const PROFILE_CACHE_TTL = 5 * 60 * 1000;
 
 function profileCacheSave(userId, data) {
-  try {
-    localStorage.setItem('profile:' + userId, JSON.stringify({ data, ts: Date.now() }));
-  } catch(_) {}
+  try { localStorage.setItem('profile:' + userId, JSON.stringify({ data, ts: Date.now() })); } catch(_) {}
 }
-
 function profileCacheGet(userId) {
   try {
     const raw = localStorage.getItem('profile:' + userId);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (Date.now() - parsed.ts > PROFILE_CACHE_TTL) {
-      localStorage.removeItem('profile:' + userId);
-      return null;
-    }
+    if (Date.now() - parsed.ts > PROFILE_CACHE_TTL) { localStorage.removeItem('profile:' + userId); return null; }
     return parsed.data;
   } catch(_) { return null; }
 }
-
 function profileCacheClear(userId) {
   try {
-    if (userId) {
-      localStorage.removeItem('profile:' + userId);
-    } else {
-      Object.keys(localStorage)
-        .filter(k => k.startsWith('profile:'))
-        .forEach(k => localStorage.removeItem(k));
-    }
+    if (userId) { localStorage.removeItem('profile:' + userId); }
+    else { Object.keys(localStorage).filter(k => k.startsWith('profile:')).forEach(k => localStorage.removeItem(k)); }
   } catch(_) {}
 }
 
@@ -94,27 +77,24 @@ function profileCacheClear(userId) {
 // ════════════════════════════════════════════════════════════
 let _authBusy = false;
 const isAuthBusy = () => _authBusy;
-
 let pendingOTPData = null;
 
 // ════════════════════════════════════════════════════════════
-//  TIMEOUT WRAPPER
+//  TIMEOUT & RETRY
 // ════════════════════════════════════════════════════════════
 function withTimeout(promise, ms, label) {
   ms    = ms    || 5000;
   label = label || 'query';
-  const timeout = new Promise(function(_, reject) {
-    setTimeout(function() {
-      reject(new Error('[TIMEOUT] ' + label + ' melebihi ' + ms + 'ms'));
-    }, ms);
-  });
-  return Promise.race([promise, timeout]);
+  return Promise.race([
+    promise,
+    new Promise(function(_, reject) {
+      setTimeout(function() {
+        reject(new Error('[TIMEOUT] ' + label + ' melebihi ' + ms + 'ms'));
+      }, ms);
+    })
+  ]);
 }
 
-// ════════════════════════════════════════════════════════════
-//  AUTO-RETRY — Exponential backoff (no fake loading)
-//  Retry hanya terjadi setelah request nyata gagal.
-// ════════════════════════════════════════════════════════════
 async function withRetry(fn, opts) {
   const maxAttempts = (opts && opts.maxAttempts) || 3;
   const baseDelay   = (opts && opts.baseDelay)   || 500;
@@ -123,7 +103,7 @@ async function withRetry(fn, opts) {
   for (let i = 0; i < maxAttempts; i++) {
     try {
       const result = await fn();
-      if (i > 0) console.log('[Retry] ' + label + ' berhasil pada percobaan ' + (i + 1));
+      if (i > 0) console.log('[Retry] ' + label + ' berhasil percobaan ' + (i+1));
       return result;
     } catch (e) {
       lastErr = e;
@@ -131,11 +111,8 @@ async function withRetry(fn, opts) {
       const isNetwork = !isOnline() || (e.message && (e.message.includes('fetch') || e.message.includes('network')));
       if (i < maxAttempts - 1 && (isTimeout || isNetwork)) {
         const delay = baseDelay * Math.pow(2, i);
-        console.warn('[Retry] ' + label + ' gagal (' + e.message + '), coba lagi dalam ' + delay + 'ms...');
         await new Promise(function(r) { setTimeout(r, delay); });
-      } else {
-        break;
-      }
+      } else { break; }
     }
   }
   throw lastErr;
@@ -146,14 +123,8 @@ async function withRetry(fn, opts) {
 // ════════════════════════════════════════════════════════════
 const _cache = new Map();
 const TTL = { mapel: 30000, kisi: 60000, profile: 60000 };
-
 const cacheSet = (k, v, ttl) => _cache.set(k, { v, exp: Date.now() + ttl });
-const cacheGet = k => {
-  const e = _cache.get(k);
-  if (!e) return null;
-  if (Date.now() > e.exp) { _cache.delete(k); return null; }
-  return e.v;
-};
+const cacheGet = k => { const e = _cache.get(k); if (!e) return null; if (Date.now() > e.exp) { _cache.delete(k); return null; } return e.v; };
 const cacheDel   = prefix => { for (const k of _cache.keys()) if (k.startsWith(prefix)) _cache.delete(k); };
 const cacheClear = ()     => _cache.clear();
 
@@ -181,31 +152,21 @@ async function rtUnsubscribeAll() {
 }
 
 // ════════════════════════════════════════════════════════════
-//  PROFILE — Core functions
+//  PROFILE CORE
 // ════════════════════════════════════════════════════════════
 
 async function getProfile(userId) {
-  console.log('[Auth] getProfile untuk userId:', userId);
+  console.log('[Auth] getProfile userId:', userId);
   try {
     const result = await withTimeout(
       sb.from('profiles')
-        .select('id,user_id,nama_lengkap,email,kelas,role,status,avatar_url')
+        .select('id,user_id,nama_lengkap,email,kelas,role,status,rejection_reason,terms_accepted,terms_accepted_at,avatar_url,nama_manual')
         .eq('user_id', userId)
         .maybeSingle(),
-      5000,
-      'getProfile'
+      5000, 'getProfile'
     );
-
-    if (result.error) {
-      console.error('[Auth] getProfile error:', result.error.message);
-      return null;
-    }
-
-    if (result.data) {
-      profileCacheSave(userId, result.data);
-    }
-
-    console.log('[Auth] getProfile result:', result.data ? 'ditemukan' : 'tidak ada');
+    if (result.error) { console.error('[Auth] getProfile error:', result.error.message); return null; }
+    if (result.data) profileCacheSave(userId, result.data);
     return result.data;
   } catch (e) {
     console.error('[Auth] getProfile exception:', e.message);
@@ -214,21 +175,15 @@ async function getProfile(userId) {
 }
 
 async function ensureProfile(user) {
-  console.log('[Auth] ensureProfile untuk:', user.email);
-
+  console.log('[Auth] ensureProfile:', user.email);
   let p = await getProfile(user.id);
-  if (p) { console.log('[Auth] Profile sudah ada (cek 1)'); return p; }
-
-  console.log('[Auth] Profile belum ada, tunggu DB trigger 800ms...');
+  if (p) { console.log('[Auth] Profile sudah ada'); return p; }
   await new Promise(function(r) { setTimeout(r, 800); });
-
   p = await getProfile(user.id);
-  if (p) { console.log('[Auth] Profile sudah ada (cek 2 pasca trigger)'); return p; }
+  if (p) return p;
 
-  console.log('[Auth] Membuat profile manual...');
   const nama = (user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name))
     || user.email.split('@')[0];
-
   try {
     const { data, error } = await withTimeout(
       sb.from('profiles').upsert({
@@ -237,14 +192,13 @@ async function ensureProfile(user) {
         email:        user.email,
         kelas:        '8F',
         role:         'siswa',
-        status:       'pending'
+        status:       'pending',
+        terms_accepted: false
       }, { onConflict: 'user_id' }).select().single(),
-      5000,
-      'ensureProfile upsert'
+      5000, 'ensureProfile upsert'
     );
-    if (error) { console.error('[Auth] ensureProfile upsert error:', error.message); return null; }
+    if (error) { console.error('[Auth] ensureProfile error:', error.message); return null; }
     if (data) profileCacheSave(user.id, data);
-    console.log('[Auth] Profile berhasil dibuat manual');
     return data;
   } catch (e) {
     console.error('[Auth] ensureProfile exception:', e.message);
@@ -253,15 +207,55 @@ async function ensureProfile(user) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  FETCH PROFILE SAFE (cache-first, background refresh)
+// ════════════════════════════════════════════════════════════
+
+async function fetchProfileSafe(user) {
+  const isOAuth = (user.app_metadata && user.app_metadata.provider === 'google')
+    || (user.app_metadata && user.app_metadata.providers && user.app_metadata.providers.includes('google'));
+  console.log('[Auth] fetchProfileSafe:', user.email, '| OAuth:', isOAuth);
+
+  const cached = profileCacheGet(user.id);
+  if (cached) {
+    console.log('[Auth] Profile dari cache');
+    getProfile(user.id).then(fresh => {
+      if (fresh && currentProfile && fresh.user_id === currentProfile.user_id) {
+        const changed = JSON.stringify(fresh) !== JSON.stringify(currentProfile);
+        if (changed) {
+          currentProfile = fresh;
+          if (fresh.status !== cached.status || fresh.role !== cached.role) routeProfile(fresh);
+        }
+      }
+    }).catch(() => {});
+    return cached;
+  }
+
+  console.log('[Auth] Fetch dari server...');
+  let profile = null;
+  try {
+    profile = await withRetry(function() { return getProfile(user.id); },
+      { maxAttempts: 3, baseDelay: 400, label: 'fetchProfileSafe' });
+  } catch(e) { console.error('[Auth] fetchProfileSafe retry gagal:', e.message); }
+
+  if (profile) return profile;
+
+  await new Promise(function(r) { setTimeout(r, 800); });
+  profile = await getProfile(user.id);
+  if (profile) return profile;
+
+  return await ensureProfile(user);
+}
+
+// ════════════════════════════════════════════════════════════
 //  REGISTER & OTP
 // ════════════════════════════════════════════════════════════
 
-async function initiateRegister(nama, email, password, kelas, role) {
+async function initiateRegister(nama, email, password, kelas, role, termsAccepted) {
   if (!isOnline()) return { success: false, error: 'Tidak ada koneksi internet.' };
   const { data: ex } = await sb.from('profiles').select('email').eq('email', email).maybeSingle();
   if (ex) return { success: false, error: 'Email sudah terdaftar.' };
 
-  pendingOTPData = { nama, email, password, kelas, role };
+  pendingOTPData = { nama, email, password, kelas, role, termsAccepted: !!termsAccepted };
   const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
   if (error) return { success: false, error: 'Gagal kirim OTP: ' + error.message };
   return { success: true };
@@ -269,57 +263,48 @@ async function initiateRegister(nama, email, password, kelas, role) {
 
 async function verifyOTPAndRegister(inputOTP) {
   if (!pendingOTPData) return { success: false, error: 'Sesi habis. Daftar ulang.' };
-  const { nama, email, password, kelas, role } = pendingOTPData;
+  const { nama, email, password, kelas, role, termsAccepted } = pendingOTPData;
 
   const { data, error } = await sb.auth.verifyOtp({ email, token: inputOTP, type: 'email' });
   if (error) return { success: false, error: 'OTP salah atau kadaluarsa.' };
 
   _authBusy = true;
-  console.log('[Auth] _authBusy = true (OTP verify)');
-
   try {
     const user = data.user;
     await sb.auth.updateUser({ password });
     await new Promise(function(r) { setTimeout(r, 700); });
 
+    const now = new Date().toISOString();
     const { error: pe } = await withTimeout(
       sb.from('profiles').upsert({
-        user_id:      user.id,
-        nama_lengkap: nama,
+        user_id:          user.id,
+        nama_lengkap:     nama,
         email,
         kelas,
         role,
-        status:       role === 'admin' ? 'approved' : 'pending',
-        updated_at:   new Date().toISOString()
+        status:           role === 'admin' ? 'approved' : 'pending',
+        terms_accepted:   !!termsAccepted,
+        terms_accepted_at: termsAccepted ? now : null,
+        updated_at:       now
       }, { onConflict: 'user_id' }),
-      5000,
-      'verifyOTP upsert profile'
+      5000, 'verifyOTP upsert profile'
     );
-
-    if (pe) {
-      console.error('[Auth] OTP upsert error:', pe.message);
-      return { success: false, error: 'Gagal simpan profil: ' + pe.message };
-    }
+    if (pe) { console.error('[Auth] OTP upsert error:', pe.message); return { success: false, error: 'Gagal simpan profil: ' + pe.message }; }
 
     pendingOTPData = null;
     const profile = await getProfile(user.id);
     return { success: true, user, profile };
-
   } catch (e) {
-    console.error('[Auth] verifyOTPAndRegister exception:', e.message);
     return { success: false, error: 'Terjadi kesalahan: ' + e.message };
   } finally {
     _authBusy = false;
-    console.log('[Auth] _authBusy = false (OTP selesai)');
   }
 }
 
 async function resendOTPCode() {
   if (!pendingOTPData) return { success: false, error: 'Sesi habis.' };
   if (!isOnline()) return { success: false, error: 'Tidak ada koneksi internet.' };
-  const { error } = await sb.auth.signInWithOtp({
-    email: pendingOTPData.email, options: { shouldCreateUser: true }
-  });
+  const { error } = await sb.auth.signInWithOtp({ email: pendingOTPData.email, options: { shouldCreateUser: true } });
   return error ? { success: false, error: error.message } : { success: true };
 }
 
@@ -328,12 +313,10 @@ async function resendOTPCode() {
 // ════════════════════════════════════════════════════════════
 
 async function loginUser(email, password) {
-  if (!isOnline()) return { success: false, error: 'Tidak ada koneksi internet. Periksa WiFi atau data Anda.' };
-
+  if (!isOnline()) return { success: false, error: 'Tidak ada koneksi internet.' };
   try {
     const { data, error } = await withTimeout(
-      sb.auth.signInWithPassword({ email, password }),
-      10000, 'loginUser'
+      sb.auth.signInWithPassword({ email, password }), 10000, 'loginUser'
     );
     if (error) {
       const m = error.message || '';
@@ -348,22 +331,24 @@ async function loginUser(email, password) {
 
     let profile = null;
     try {
-      profile = await withRetry(
-        function() { return getProfile(data.user.id); },
-        { maxAttempts: 3, baseDelay: 500, label: 'getProfile after login' }
-      );
+      profile = await withRetry(function() { return getProfile(data.user.id); },
+        { maxAttempts: 3, baseDelay: 500, label: 'getProfile after login' });
     } catch(_) {}
 
     if (!profile) profile = await ensureProfile(data.user);
+    if (!profile) { await sb.auth.signOut(); return { success: false, error: 'Profil tidak ditemukan. Hubungi admin.' }; }
 
-    if (!profile) {
+    // Blokir user yang dicabut aksesnya
+    if (profile.status === 'rejected') {
       await sb.auth.signOut();
-      return { success: false, error: 'Profil tidak ditemukan. Hubungi admin.' };
+      const reason = profile.rejection_reason ? ` Alasan: ${profile.rejection_reason}` : '';
+      return { success: false, error: 'Akun Anda telah dinonaktifkan.' + reason };
     }
+
     return { success: true, user: data.user, profile };
   } catch (e) {
     const msg = (e.message && e.message.includes('TIMEOUT'))
-      ? 'Koneksi timeout. Server lambat merespons, coba lagi.'
+      ? 'Koneksi timeout. Server lambat merespons.'
       : 'Koneksi gagal. Periksa internet Anda.';
     return { success: false, error: msg };
   }
@@ -388,15 +373,10 @@ async function loginWithGoogle() {
 
 async function deleteUserProfile(profileId) {
   try {
-    const { error } = await withTimeout(
-      sb.from('profiles').delete().eq('id', profileId),
-      5000, 'deleteUserProfile'
-    );
+    const { error } = await withTimeout(sb.from('profiles').delete().eq('id', profileId), 5000, 'deleteUserProfile');
     if (!error) cacheDel('profile:');
     return { success: !error, error: error && error.message };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
+  } catch (e) { return { success: false, error: e.message }; }
 }
 
 async function logoutUser() {
@@ -414,29 +394,24 @@ async function logoutUser() {
 }
 
 // ════════════════════════════════════════════════════════════
-//  CACHED GETTERS
+//  EMAIL NOTIFIKASI (via EmailJS)
 // ════════════════════════════════════════════════════════════
 
-async function getMapelCached() {
-  const hit = cacheGet('mapel:all');
-  if (hit) return { data: hit, error: null };
-  const r = await sb.from('mapel')
-    .select('id,nama,icon,is_locked,color_from,color_to,urutan,deskripsi')
-    .order('urutan');
-  if (r.data) cacheSet('mapel:all', r.data, TTL.mapel);
-  return r;
-}
-
-async function getKisiKisiCached(mapelId) {
-  const k   = 'kisi:' + mapelId;
-  const hit = cacheGet(k);
-  if (hit) return { data: hit, error: null };
-  const r = await sb.from('kisi_kisi')
-    .select('id,judul,konten,tipe,urutan')
-    .eq('mapel_id', mapelId)
-    .order('urutan');
-  if (r.data) cacheSet(k, r.data, TTL.kisi);
-  return r;
+function _sendStatusEmail(templateId, toEmail, toName, reason) {
+  if (typeof emailjs === 'undefined') { console.warn('[Email] EmailJS tidak dimuat'); return; }
+  try {
+    emailjs.init(EMAILJS_PUBLIC_KEY);
+    emailjs.send(EMAILJS_SERVICE_ID, templateId, {
+      to_email: toEmail,
+      to_name:  toName,
+      reason:   reason || 'Tidak ada alasan diberikan.',
+      site_name: 'KisiKisi 8F'
+    }).then(function() {
+      console.log('[Email] Terkirim ke', toEmail);
+    }).catch(function(err) {
+      console.warn('[Email] Gagal kirim:', err);
+    });
+  } catch(e) { console.warn('[Email] Error:', e); }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -444,14 +419,51 @@ async function getKisiKisiCached(mapelId) {
 // ════════════════════════════════════════════════════════════
 
 const getAllUsers = () => sb.from('profiles')
-  .select('id,nama_lengkap,email,kelas,role,status,created_at')
+  .select('id,user_id,nama_lengkap,email,kelas,role,status,rejection_reason,terms_accepted,created_at')
   .order('created_at', { ascending: false });
 
-async function updateUserStatus(id, status) {
-  const { error } = await sb.from('profiles')
-    .update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+async function updateUserStatus(id, status, reason) {
+  const updateData = { status, updated_at: new Date().toISOString() };
+  if (reason) updateData.rejection_reason = reason;
+  const { error } = await sb.from('profiles').update(updateData).eq('id', id);
   if (!error) cacheDel('profile:');
   return { success: !error, error: error && error.message };
+}
+
+// ════════════════════════════════════════════════════════════
+//  CACHED GETTERS
+// ════════════════════════════════════════════════════════════
+
+function computeMapelOpen(m) {
+  if (m.waktu_buka) {
+    const now   = Date.now();
+    const buka  = new Date(m.waktu_buka).getTime();
+    const tutup = m.waktu_tutup ? new Date(m.waktu_tutup).getTime() : null;
+    return now >= buka && (tutup === null || now <= tutup);
+  }
+  return !m.is_locked;
+}
+
+async function getMapelCached() {
+  const hit = cacheGet('mapel:all');
+  if (hit) return { data: hit.map(m => ({ ...m, _open: computeMapelOpen(m) })), error: null };
+  const r = await sb.from('mapel')
+    .select('id,nama,icon,is_locked,waktu_buka,waktu_tutup,color_from,color_to,urutan,deskripsi')
+    .order('urutan');
+  if (r.data) {
+    cacheSet('mapel:all', r.data, TTL.mapel);
+    r.data = r.data.map(m => ({ ...m, _open: computeMapelOpen(m) }));
+  }
+  return r;
+}
+
+async function getKisiKisiCached(mapelId) {
+  const k = 'kisi:' + mapelId, hit = cacheGet(k);
+  if (hit) return { data: hit, error: null };
+  const r = await sb.from('kisi_kisi')
+    .select('id,judul,konten,tipe,urutan').eq('mapel_id', mapelId).order('urutan');
+  if (r.data) cacheSet(k, r.data, TTL.kisi);
+  return r;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -459,7 +471,7 @@ async function updateUserStatus(id, status) {
 // ════════════════════════════════════════════════════════════
 
 const getMapel = () => sb.from('mapel')
-  .select('id,nama,icon,is_locked,color_from,color_to,urutan,deskripsi')
+  .select('id,nama,icon,is_locked,waktu_buka,waktu_tutup,color_from,color_to,urutan,deskripsi')
   .order('urutan');
 
 async function createMapel(data) {
@@ -467,19 +479,16 @@ async function createMapel(data) {
   if (!error) cacheDel('mapel:');
   return { success: !error, error: error && error.message, data: result };
 }
-
 async function updateMapel(id, data) {
   const { error } = await sb.from('mapel').update(data).eq('id', id);
   if (!error) cacheDel('mapel:');
   return { success: !error, error: error && error.message };
 }
-
 async function deleteMapel(id) {
   const { error } = await sb.from('mapel').delete().eq('id', id);
   if (!error) { cacheDel('mapel:'); cacheDel('kisi:'); }
   return { success: !error, error: error && error.message };
 }
-
 async function toggleMapelLock(id, locked) {
   const { error } = await sb.from('mapel').update({ is_locked: locked }).eq('id', id);
   if (!error) cacheDel('mapel:');
@@ -498,14 +507,12 @@ async function createKisiKisi(data) {
   if (!error) cacheDel('kisi:' + data.mapel_id);
   return { success: !error, error: error && error.message, data: result };
 }
-
 async function updateKisiKisi(id, data) {
   const { error } = await sb.from('kisi_kisi')
     .update(Object.assign({}, data, { updated_at: new Date().toISOString() })).eq('id', id);
   if (!error) cacheDel('kisi:');
   return { success: !error, error: error && error.message };
 }
-
 async function deleteKisiKisi(id) {
   const { error } = await sb.from('kisi_kisi').delete().eq('id', id);
   if (!error) cacheDel('kisi:');
@@ -519,17 +526,14 @@ async function deleteKisiKisi(id) {
 async function getQuestions(mapelId) {
   const { data, error } = await sb.from('questions')
     .select('id,question_text,type,explanation,urutan,options(id,option_text,is_correct,urutan)')
-    .eq('mapel_id', mapelId)
-    .order('urutan')
-    .order('urutan', { foreignTable: 'options' });
+    .eq('mapel_id', mapelId).order('urutan').order('urutan', { foreignTable: 'options' });
   return { data, error };
 }
 
 async function saveQuestion(mapelId, payload) {
   const { question_text, type, explanation, options, urutan } = payload;
   if (!question_text || !question_text.trim()) return { success: false, error: 'Teks soal wajib diisi.' };
-  if (type !== 'essay' && (!options || options.length < 2))
-    return { success: false, error: 'Minimal 2 pilihan jawaban.' };
+  if (type !== 'essay' && (!options || options.length < 2)) return { success: false, error: 'Minimal 2 pilihan jawaban.' };
   if (type === 'mcq' && options.filter(function(o) { return o.is_correct; }).length !== 1)
     return { success: false, error: 'Pilihan ganda harus tepat 1 jawaban benar.' };
   if (type === 'multiple' && options.filter(function(o) { return o.is_correct; }).length < 2)
@@ -543,14 +547,7 @@ async function saveQuestion(mapelId, payload) {
 
   if (type !== 'essay' && options && options.length) {
     const { error: oErr } = await sb.from('options').insert(
-      options.map(function(o, i) {
-        return {
-          question_id: q.id,
-          option_text: o.option_text.trim(),
-          is_correct:  !!o.is_correct,
-          urutan:      i + 1
-        };
-      })
+      options.map(function(o, i) { return { question_id: q.id, option_text: o.option_text.trim(), is_correct: !!o.is_correct, urutan: i + 1 }; })
     );
     if (oErr) return { success: false, error: 'Soal tersimpan tapi options gagal: ' + oErr.message };
   }
@@ -570,24 +567,19 @@ async function uploadBroadcastImage(file) {
   try {
     const ext  = file.name.split('.').pop();
     const name = 'bcast_' + Date.now() + '.' + ext;
-    const { data, error } = await sb.storage
-      .from('broadcast-images')
+    const { data, error } = await sb.storage.from('broadcast-images')
       .upload(name, file, { cacheControl: '3600', upsert: false });
     if (error) return { success: false, error: error.message };
     const { data: urlData } = sb.storage.from('broadcast-images').getPublicUrl(data.path);
     return { success: true, url: urlData.publicUrl };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
+  } catch (e) { return { success: false, error: e.message }; }
 }
 
 async function sendBroadcast(title, message, imageUrl) {
   imageUrl = imageUrl || null;
   const { data: { user } } = await sb.auth.getUser();
   const { error } = await sb.from('broadcasts').insert({
-    title: title || 'Pengumuman', message,
-    image_url: imageUrl,
-    created_by: user && user.id
+    title: title || 'Pengumuman', message, image_url: imageUrl, created_by: user && user.id
   });
   return { success: !error, error: error && error.message };
 }
@@ -599,15 +591,12 @@ async function getBroadcastHistory() {
   return data || [];
 }
 
-let _bcastLastCheck = null;
-let _bcastPollTimer = null;
-let _bcastPollCb   = null;
+let _bcastLastCheck = null, _bcastPollTimer = null, _bcastPollCb = null;
 
 async function _pollBroadcast() {
   if (!_bcastPollCb || !currentUser || !isOnline()) return;
   try {
-    let q = sb.from('broadcasts')
-      .select('id,title,message,image_url,created_at')
+    let q = sb.from('broadcasts').select('id,title,message,image_url,created_at')
       .order('created_at', { ascending: false }).limit(5);
     if (_bcastLastCheck) q = q.gt('created_at', _bcastLastCheck);
     const { data } = await q;
@@ -624,28 +613,22 @@ function startBroadcastPolling(cb) {
   clearInterval(_bcastPollTimer);
   _bcastPollTimer = setInterval(_pollBroadcast, 15000);
 }
-
-function stopBroadcastPolling() {
-  clearInterval(_bcastPollTimer);
-  _bcastPollCb = null;
-}
+function stopBroadcastPolling() { clearInterval(_bcastPollTimer); _bcastPollCb = null; }
 
 // ════════════════════════════════════════════════════════════
 //  REALTIME HELPERS
 // ════════════════════════════════════════════════════════════
 
-const rtMapel     = function(cb) { return rtSubscribe('mapel-ch',    { event: '*',      schema: 'public', table: 'mapel' }, cb); };
-const rtProfiles  = function(cb) {
-  return rtSubscribe('profiles-ch', { event: '*', schema: 'public', table: 'profiles' }, function(payload) {
-    // Update localStorage cache secara real-time jika profile user saat ini berubah
-    if (currentUser && payload.new && payload.new.user_id === currentUser.id) {
-      profileCacheSave(currentUser.id, payload.new);
-      console.log('[RT] Profile cache diperbarui via realtime');
-    }
-    cb(payload);
-  });
-};
-const rtBroadcast = function(cb) {
+const rtMapel    = cb => rtSubscribe('mapel-ch',    { event: '*', schema: 'public', table: 'mapel' }, cb);
+const rtRatings  = cb => rtSubscribe('ratings-ch',  { event: '*', schema: 'public', table: 'ratings' }, cb);
+const rtProfiles = cb => rtSubscribe('profiles-ch', { event: '*', schema: 'public', table: 'profiles' }, function(payload) {
+  if (currentUser && payload.new && payload.new.user_id === currentUser.id) {
+    profileCacheSave(currentUser.id, payload.new);
+    console.log('[RT] Profile cache diperbarui via realtime');
+  }
+  cb(payload);
+});
+const rtBroadcast = cb => {
   startBroadcastPolling(cb);
   return rtSubscribe('broadcast-ch', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, function(p) {
     _bcastLastCheck = new Date().toISOString();
@@ -654,46 +637,34 @@ const rtBroadcast = function(cb) {
 };
 
 // ════════════════════════════════════════════════════════════
-//  QUIZ RESULTS — Leaderboard
+//  QUIZ RESULTS
 // ════════════════════════════════════════════════════════════
 
 async function saveQuizResult(mapelId, nama, score, total, timeMs) {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { success: false };
   const pct = total > 0 ? Math.round((score / total) * 100) : 0;
-  const { error } = await sb.from('quiz_results').insert({
-    user_id: user.id,
-    mapel_id: mapelId,
-    nama_lengkap: nama,
-    score, total, pct,
-    time_ms: timeMs
-  });
+  const { error } = await sb.from('quiz_results').insert({ user_id: user.id, mapel_id: mapelId, nama_lengkap: nama, score, total, pct, time_ms: timeMs });
   return { success: !error, error: error && error.message };
 }
 
 async function getLeaderboard(mapelId) {
   let query = sb.from('quiz_results')
     .select('id,nama_lengkap,score,total,pct,time_ms,mapel_id,created_at')
-    .order('pct', { ascending: false })
-    .order('time_ms', { ascending: true })
-    .limit(50);
+    .order('pct', { ascending: false }).order('time_ms', { ascending: true }).limit(50);
   if (mapelId) query = query.eq('mapel_id', mapelId);
   const { data, error } = await query;
-  // Deduplicate: hanya ambil hasil terbaik per user per mapel
   if (!data) return { data: [], error };
   const best = {};
   data.forEach(r => {
     const key = r.mapel_id + ':' + r.nama_lengkap;
-    if (!best[key] || r.pct > best[key].pct || (r.pct === best[key].pct && r.time_ms < best[key].time_ms)) {
-      best[key] = r;
-    }
+    if (!best[key] || r.pct > best[key].pct || (r.pct === best[key].pct && r.time_ms < best[key].time_ms)) best[key] = r;
   });
-  const sorted = Object.values(best).sort((a, b) => b.pct - a.pct || a.time_ms - b.time_ms);
-  return { data: sorted, error };
+  return { data: Object.values(best).sort((a,b) => b.pct - a.pct || a.time_ms - b.time_ms), error };
 }
 
 // ════════════════════════════════════════════════════════════
-//  USER PRESENCE — Online tracking
+//  USER PRESENCE
 // ════════════════════════════════════════════════════════════
 
 let _presenceInterval = null;
@@ -702,10 +673,8 @@ async function updatePresence(page) {
   const { data: { user } } = await sb.auth.getUser();
   if (!user || !currentProfile) return;
   await sb.from('user_presence').upsert({
-    user_id: user.id,
-    nama_lengkap: currentProfile.nama_lengkap,
-    last_seen: new Date().toISOString(),
-    page: page || 'dashboard'
+    user_id: user.id, nama_lengkap: currentProfile.nama_lengkap,
+    last_seen: new Date().toISOString(), page: page || 'dashboard'
   }, { onConflict: 'user_id' });
 }
 
@@ -724,41 +693,70 @@ async function clearPresence() {
 }
 
 async function getOnlineUsers() {
-  // "Online" = last_seen dalam 2 menit terakhir
   const cutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
   const { data, error } = await sb.from('user_presence')
     .select('user_id,nama_lengkap,last_seen,page')
-    .gte('last_seen', cutoff)
-    .order('last_seen', { ascending: false });
+    .gte('last_seen', cutoff).order('last_seen', { ascending: false });
   return { data: data || [], error };
 }
 
 // ════════════════════════════════════════════════════════════
-//  SITE RATINGS
+//  RATINGS
 // ════════════════════════════════════════════════════════════
 
 async function hasRated() {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return true;
-  const { data } = await sb.from('site_ratings').select('id').eq('user_id', user.id).maybeSingle();
+  const { data } = await sb.from('ratings').select('id').eq('user_id', user.id).maybeSingle();
   return !!data;
 }
 
 async function saveSiteRating(rating, komentar) {
   const { data: { user } } = await sb.auth.getUser();
-  if (!user || !currentProfile) return { success: false, error: 'Tidak login.' };
-  const { error } = await sb.from('site_ratings').upsert({
-    user_id: user.id,
-    nama_lengkap: currentProfile.nama_lengkap,
-    rating,
-    komentar: komentar || null
+  if (!user) return { success: false, error: 'Tidak login.' };
+  const { error } = await sb.from('ratings').upsert({
+    user_id: user.id, rating, komentar: komentar || null
   }, { onConflict: 'user_id' });
   return { success: !error, error: error && error.message };
 }
 
+async function editRating(rating, komentar) {
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { success: false, error: 'Tidak login.' };
+  const { error } = await sb.from('ratings').update({ rating, komentar: komentar || null }).eq('user_id', user.id);
+  return { success: !error, error: error && error.message };
+}
+
+async function deleteMyRating() {
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { success: false, error: 'Tidak login.' };
+  const { error } = await sb.from('ratings').delete().eq('user_id', user.id);
+  return { success: !error, error: error && error.message };
+}
+
+async function getMyRating() {
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
+  const { data } = await sb.from('ratings')
+    .select('id,rating,komentar,created_at,updated_at').eq('user_id', user.id).maybeSingle();
+  return data;
+}
+
 async function getAllRatings() {
-  const { data, error } = await sb.from('site_ratings')
-    .select('id,nama_lengkap,rating,komentar,created_at')
+  const { data, error } = await sb.from('ratings')
+    .select('id,rating,komentar,created_at,updated_at,user_id,profiles!inner(nama_lengkap)')
     .order('created_at', { ascending: false });
-  return { data: data || [], error };
+  const flat = (data || []).map(r => ({
+    id: r.id, user_id: r.user_id,
+    nama_lengkap: r.profiles?.nama_lengkap || 'Anonim',
+    rating: r.rating, komentar: r.komentar, created_at: r.created_at, updated_at: r.updated_at
+  }));
+  return { data: flat, error };
+}
+
+async function getRatingStats() {
+  const { data, error } = await sb.from('ratings').select('rating');
+  if (error || !data?.length) return { avg: 0, count: 0, error };
+  const avg = data.reduce((s, r) => s + r.rating, 0) / data.length;
+  return { avg: parseFloat(avg.toFixed(1)), count: data.length, error: null };
 }

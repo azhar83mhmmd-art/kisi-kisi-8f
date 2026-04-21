@@ -645,3 +645,181 @@ tr:hover td { background:rgba(255,255,255,.015); }
   background:var(--surface-2); border-radius:8px; padding:8px 12px;
 }
 .quiz-timer-val { font-weight:700; color:var(--blue); font-variant-numeric:tabular-nums; }
+
+/* ── RATING PUBLIK — Halaman Rating ──────────────────────── */
+.rating-summary-card {
+  background:linear-gradient(135deg,rgba(245,166,35,.12),rgba(245,166,35,.04));
+  border:1px solid rgba(245,166,35,.3);
+  border-radius:16px; padding:24px; text-align:center;
+}
+.rating-big-avg { font-size:60px; font-weight:800; color:var(--amber); line-height:1; }
+.rating-big-stars { font-size:28px; color:var(--amber); margin:6px 0; letter-spacing:3px; }
+.rating-big-count { font-size:13px; color:var(--muted); }
+
+/* Rating Saya */
+.my-rating-card {
+  background:var(--surface); border:1px solid var(--border-m);
+  border-radius:14px; padding:16px 18px;
+  animation:fadeUp .25s ease both;
+}
+.my-rating-card.empty { text-align:center; padding:20px; }
+.my-rating-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:8px; }
+.my-rating-stars { font-size:24px; color:var(--amber); letter-spacing:2px; margin-bottom:6px; }
+.my-rating-comment { font-size:13px; color:var(--muted); font-style:italic; }
+.my-rating-date { font-size:11px; color:var(--dim); margin-top:4px; }
+
+/* Item rating dengan highlight milik saya */
+.rating-item-me {
+  background:rgba(79,142,247,.06);
+  border-color:rgba(79,142,247,.25);
+}
+.rating-me-badge {
+  font-size:10px; background:rgba(79,142,247,.2);
+  color:var(--blue); border-radius:4px; padding:1px 5px;
+  font-style:normal; font-weight:600;
+}
+
+/* ── JADWAL OTOMATIS — Label di mapel card ────────────────── */
+.mapel-status.lock { color:var(--red); }
+.mapel-status.avail { color:var(--green); }
+/* Hint jadwal waktu buka pada card terkunci */
+.mapel-schedule-hint {
+  font-size:10px; color:var(--amber);
+  margin-top:4px; opacity:.85;
+}
+
+/* ── DATETIME INPUT ───────────────────────────────────────── */
+input[type="datetime-local"] {
+  background:var(--surface-2);
+  border:1px solid var(--border-m);
+  border-radius:var(--r); padding:10px 12px;
+  color:var(--text); font-size:13px; width:100%;
+  color-scheme:dark;
+}
+input[type="datetime-local"]:focus {
+  outline:none; border-color:var(--blue);
+  box-shadow:0 0 0 3px rgba(79,142,247,.15);
+}
+
+/* ════════════════════════════════════════════════════════════
+   ADDITIONS v8 — Terms, Kelas, Toast update, Reject reason,
+                  Lock icon (CSS), ToS modal
+════════════════════════════════════════════════════════════ */
+
+/* ── TERMS CHECKBOX ──────────────────────────────────────── */
+.terms-check-wrap { margin:14px 0 4px; }
+.terms-check-label {
+  display:flex; align-items:flex-start; gap:10px;
+  cursor:pointer; user-select:none;
+}
+.terms-checkbox { display:none; }
+.terms-check-box {
+  flex-shrink:0; width:18px; height:18px; margin-top:1px;
+  border:1.5px solid var(--border-m); border-radius:5px;
+  background:var(--surface-2); transition:var(--t);
+  position:relative;
+}
+.terms-checkbox:checked + .terms-check-box {
+  background:var(--blue); border-color:var(--blue);
+}
+.terms-checkbox:checked + .terms-check-box::after {
+  content:''; position:absolute; left:4px; top:1px;
+  width:6px; height:10px;
+  border:2px solid #fff; border-top:none; border-left:none;
+  transform:rotate(45deg);
+}
+.terms-check-text { font-size:13px; color:var(--muted); line-height:1.5; }
+.terms-link {
+  color:var(--blue); font-size:13px; font-weight:600;
+  text-decoration:underline; background:none;
+  border:none; cursor:pointer; padding:0;
+  font-family:var(--font);
+}
+.terms-link:hover { color:var(--purple); }
+.terms-error {
+  font-size:12px; color:var(--red); margin-top:6px;
+  padding:6px 10px; background:rgba(242,92,92,.08);
+  border-radius:6px; border-left:3px solid var(--red);
+}
+
+/* ── ToS MODAL CONTENT ───────────────────────────────────── */
+.terms-content {
+  font-size:13px; color:var(--muted); line-height:1.7;
+  max-height:55vh;
+}
+.terms-section { margin-bottom:18px; }
+.terms-section h4 {
+  font-size:13px; font-weight:700; color:var(--text);
+  margin-bottom:6px;
+}
+.terms-section p { font-size:13px; color:var(--muted); }
+.terms-highlight {
+  background:rgba(242,92,92,.06); border:1px solid rgba(242,92,92,.2);
+  border-radius:10px; padding:12px 14px;
+}
+.terms-highlight h4 { color:var(--red); }
+
+/* ── REJECT MODAL ────────────────────────────────────────── */
+.btn-danger {
+  background:rgba(242,92,92,.15); color:var(--red);
+  border:1px solid rgba(242,92,92,.3);
+  border-radius:var(--r); padding:9px 18px;
+  font-size:13px; font-weight:600;
+  transition:var(--t);
+}
+.btn-danger:hover { background:rgba(242,92,92,.25); }
+
+/* ── TOAST REDESIGN (no emoji, color-coded bar) ──────────── */
+.toast {
+  display:flex; align-items:center; gap:0;
+  background:var(--surface); border:1px solid var(--border-m);
+  border-radius:12px; overflow:hidden;
+  box-shadow:0 8px 32px rgba(0,0,0,.4);
+  min-width:260px; max-width:340px;
+  opacity:0; transform:translateX(16px);
+  transition:opacity .22s ease, transform .22s ease;
+  pointer-events:auto;
+}
+.toast.show { opacity:1; transform:translateX(0); }
+.toast.out   { opacity:0; transform:translateX(16px); }
+.t-type-bar {
+  width:4px; align-self:stretch; flex-shrink:0;
+}
+.toast.success .t-type-bar { background:var(--green); }
+.toast.error   .t-type-bar { background:var(--red); }
+.toast.warning .t-type-bar { background:var(--amber); }
+.toast.info    .t-type-bar { background:var(--blue); }
+.t-body { flex:1; padding:12px 10px; }
+.t-title { font-size:13px; font-weight:700; color:var(--text); }
+.t-msg   { font-size:12px; color:var(--muted); margin-top:2px; }
+.t-close {
+  padding:10px 12px; color:var(--dim); font-size:16px;
+  flex-shrink:0; transition:var(--t); align-self:stretch;
+  display:flex; align-items:center;
+}
+.t-close:hover { color:var(--text); }
+
+/* ── MAPEL LOCK ICON (CSS, no emoji) ────────────────────── */
+.mapel-lock-icon {
+  position:absolute; top:12px; right:12px;
+  width:20px; height:20px;
+  border:2px solid rgba(255,255,255,.25);
+  border-radius:5px;
+}
+.mapel-lock-icon::before {
+  content:''; position:absolute;
+  left:50%; top:-9px; transform:translateX(-50%);
+  width:10px; height:9px;
+  border:2px solid rgba(255,255,255,.25);
+  border-radius:5px 5px 0 0;
+  border-bottom:none;
+}
+
+/* ── REJECTION REASON BOX ────────────────────────────────── */
+#rejection-reason-box {
+  border-radius:10px; padding:12px 14px;
+}
+
+/* ── SELECT KELAS STYLE ──────────────────────────────────── */
+.field select option { background:var(--surface); color:var(--text); }
+
