@@ -129,27 +129,74 @@ const cacheDel   = prefix => { for (const k of _cache.keys()) if (k.startsWith(p
 const cacheClear = ()     => _cache.clear();
 
 // ════════════════════════════════════════════════════════════
-//  REALTIME CHANNEL MANAGER
+//  REALTIME — Centralized Event Bus
+//
+//  Arsitektur: SATU channel per tabel, banyak listener.
+//  Tidak ada duplikasi/override channel.
+//  Setiap bagian UI mendaftarkan listener via rtOn().
+//  Boot sekali saat login via rtBoot(), stop via rtStop().
 // ════════════════════════════════════════════════════════════
-const _channels = new Map();
 
-async function rtSubscribe(name, config, cb) {
-  if (_channels.has(name)) {
-    try { await _channels.get(name).unsubscribe(); } catch (_) {}
-    _channels.delete(name);
-  }
-  const ch = sb.channel(name).on('postgres_changes', config, cb).subscribe(function(status) {
-    console.log('[RT] Channel "' + name + '" status:', status);
+const _rtListeners  = {};   // { tableName: Set<fn> }
+const _rtChannels   = {};   // { channelName: channel }
+let   _rtBooted     = false;
+
+// Daftarkan listener untuk table tertentu
+// Returns fungsi untuk unregister (cleanup)
+function rtOn(table, fn) {
+  if (!_rtListeners[table]) _rtListeners[table] = new Set();
+  _rtListeners[table].add(fn);
+  return () => { if (_rtListeners[table]) _rtListeners[table].delete(fn); };
+}
+
+// Dispatch event ke semua listener tabel
+function _rtDispatch(table, payload) {
+  if (!_rtListeners[table]) return;
+  _rtListeners[table].forEach(fn => { try { fn(payload); } catch(e) { console.warn('[RT] Listener error:', e); } });
+}
+
+// Boot: buat satu channel per tabel yang dibutuhkan
+function rtBoot() {
+  if (_rtBooted) return;
+  _rtBooted = true;
+
+  const tables = ['ratings', 'profiles', 'mapel', 'broadcasts', 'user_presence'];
+
+  tables.forEach(function(table) {
+    const chName = 'rt-' + table;
+    if (_rtChannels[chName]) return;
+
+    const ch = sb.channel(chName)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, function(payload) {
+        console.log('[RT]', table, payload.eventType, payload.new || payload.old);
+        _rtDispatch(table, payload);
+        // Profile cache update otomatis
+        if (table === 'profiles' && currentUser && payload.new && payload.new.user_id === currentUser.id) {
+          profileCacheSave(currentUser.id, payload.new);
+        }
+      })
+      .subscribe(function(status, err) {
+        if (err) console.error('[RT] Channel error:', chName, err);
+        else     console.log('[RT]', chName, status);
+      });
+
+    _rtChannels[chName] = ch;
   });
-  _channels.set(name, ch);
-  return ch;
 }
 
-async function rtUnsubscribeAll() {
+// Stop: unsubscribe semua channel, hapus semua listener
+async function rtStop() {
+  _rtBooted = false;
   stopBroadcastPolling();
-  for (const ch of _channels.values()) { try { await ch.unsubscribe(); } catch (_) {} }
-  _channels.clear();
+  for (const ch of Object.values(_rtChannels)) {
+    try { await ch.unsubscribe(); } catch (_) {}
+  }
+  Object.keys(_rtChannels).forEach(k => delete _rtChannels[k]);
+  Object.keys(_rtListeners).forEach(k => delete _rtListeners[k]);
 }
+
+// Alias lama agar kode lain tidak perlu diubah
+const rtUnsubscribeAll = rtStop;
 
 // ════════════════════════════════════════════════════════════
 //  PROFILE CORE
@@ -614,27 +661,6 @@ function startBroadcastPolling(cb) {
   _bcastPollTimer = setInterval(_pollBroadcast, 15000);
 }
 function stopBroadcastPolling() { clearInterval(_bcastPollTimer); _bcastPollCb = null; }
-
-// ════════════════════════════════════════════════════════════
-//  REALTIME HELPERS
-// ════════════════════════════════════════════════════════════
-
-const rtMapel    = cb => rtSubscribe('mapel-ch',    { event: '*', schema: 'public', table: 'mapel' }, cb);
-const rtRatings  = cb => rtSubscribe('ratings-ch',  { event: '*', schema: 'public', table: 'ratings' }, cb);
-const rtProfiles = cb => rtSubscribe('profiles-ch', { event: '*', schema: 'public', table: 'profiles' }, function(payload) {
-  if (currentUser && payload.new && payload.new.user_id === currentUser.id) {
-    profileCacheSave(currentUser.id, payload.new);
-    console.log('[RT] Profile cache diperbarui via realtime');
-  }
-  cb(payload);
-});
-const rtBroadcast = cb => {
-  startBroadcastPolling(cb);
-  return rtSubscribe('broadcast-ch', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, function(p) {
-    _bcastLastCheck = new Date().toISOString();
-    cb(p.new);
-  });
-};
 
 // ════════════════════════════════════════════════════════════
 //  QUIZ RESULTS

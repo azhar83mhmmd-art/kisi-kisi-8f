@@ -696,17 +696,29 @@
 <div class="modal-bg" id="modal-rating">
   <div class="modal" style="text-align:center">
     <button class="modal-close" onclick="closeRatingModal()">x</button>
-    <div class="rating-modal-icon">+</div>
+    <div class="rating-modal-icon">
+      <svg viewBox="0 0 24 24"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+    </div>
     <h3 class="modal-title" id="modal-rating-title">Beri Penilaian</h3>
     <p class="modal-body" id="rating-quiz-result" style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:4px;display:none">—</p>
     <p class="modal-body" style="margin-bottom:24px">Bagaimana pengalaman belajar Anda di <strong>KisiKisi 8F</strong>?</p>
 
     <div class="star-rating-row" id="star-rating-row">
-      <button class="star-btn" data-val="1" onclick="setRatingStar(1)">&#9733;</button>
-      <button class="star-btn" data-val="2" onclick="setRatingStar(2)">&#9733;</button>
-      <button class="star-btn" data-val="3" onclick="setRatingStar(3)">&#9733;</button>
-      <button class="star-btn" data-val="4" onclick="setRatingStar(4)">&#9733;</button>
-      <button class="star-btn" data-val="5" onclick="setRatingStar(5)">&#9733;</button>
+      <button class="star-btn" data-val="1" onclick="setRatingStar(1)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+      </button>
+      <button class="star-btn" data-val="2" onclick="setRatingStar(2)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+      </button>
+      <button class="star-btn" data-val="3" onclick="setRatingStar(3)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+      </button>
+      <button class="star-btn" data-val="4" onclick="setRatingStar(4)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+      </button>
+      <button class="star-btn" data-val="5" onclick="setRatingStar(5)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+      </button>
     </div>
     <div class="star-label" id="star-label">Ketuk bintang untuk memberi nilai</div>
 

@@ -1,152 +1,152 @@
 // ════════════════════════════════════════════════════════════
-//  app.js — KisiKisi 8F  |  Production Fix v3
-//  Anti-stuck measures:
-//  1. initApp tidak infinite loop — selalu ada exit path
-//  2. Timeout 5 detik di setiap fetch profile
-//  3. Fallback UI jika loading terlalu lama (tombol retry)
-//  4. isAuthBusy() guard mencegah double-fetch saat OTP
-//  5. Safety timeout 10 detik (bukan 15) dengan fallback yang jelas
+// app.js — KisiKisi 8F | Production Fix v3
+// Anti-stuck measures:
+// 1. initApp tidak infinite loop — selalu ada exit path
+// 2. Timeout 5 detik di setiap fetch profile
+// 3. Fallback UI jika loading terlalu lama (tombol retry)
+// 4. isAuthBusy() guard mencegah double-fetch saat OTP
+// 5. Safety timeout 10 detik (bukan 15) dengan fallback yang jelas
 // ════════════════════════════════════════════════════════════
 
 // ── GLOBAL STATE ──────────────────────────────────────────
-let currentUser    = null;
+let currentUser = null;
 let currentProfile = null;
-let currentMapel   = null;
-let selectedRole   = 'siswa';
-let allUsers       = [];
+let currentMapel = null;
+let selectedRole = 'siswa';
+let allUsers = [];
 let editingMapelId = null, editingKisiId = null;
 let activeAdminMapelId = null;
-let soalMode       = 'kisi';
+let soalMode = 'kisi';
 let currentSoalType = 'mcq';
-let soalOptions    = [];
-let editingSoalId  = null;
-let allQuestions   = [];
+let soalOptions = [];
+let editingSoalId = null;
+let allQuestions = [];
 
 // ── HELPERS ───────────────────────────────────────────────
-const q       = id => document.getElementById(id);
-const esc     = s  => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const q = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('id-ID',
-  { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+ { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
 
 function setLoading(btn, on) {
-  if (!btn) return;
-  btn.classList.toggle('btn-loading', on);
-  btn.disabled = on;
+ if (!btn) return;
+ btn.classList.toggle('btn-loading', on);
+ btn.disabled = on;
 }
 
 // ════════════════════════════════════════════════════════════
-//  LOADING SCREEN — tiga state: loading | error | hidden
+// LOADING SCREEN — tiga state: loading | error | hidden
 // ════════════════════════════════════════════════════════════
 
 function showAppLoading(msg = 'Memuat...') {
-  const el = q('app-loading');
-  if (!el) return;
-  el.style.display = 'flex'; el.style.opacity = '1';
-  const t = el.querySelector('.loading-text'); if (t) t.textContent = msg;
-  // Sembunyikan error state
-  const errBox = q('loading-error'); if (errBox) errBox.style.display = 'none';
-  const bar    = q('load-bar');      if (bar)    bar.style.display    = '';
-  const spinner = el.querySelector('.loading-bar'); if (spinner) spinner.style.display = '';
+ const el = q('app-loading');
+ if (!el) return;
+ el.style.display = 'flex'; el.style.opacity = '1';
+ const t = el.querySelector('.loading-text'); if (t) t.textContent = msg;
+ // Sembunyikan error state
+ const errBox = q('loading-error'); if (errBox) errBox.style.display = 'none';
+ const bar = q('load-bar'); if (bar) bar.style.display = '';
+ const spinner = el.querySelector('.loading-bar'); if (spinner) spinner.style.display = '';
 }
 
 // showLoadingError — loading screen jadi error UI yang berguna
 // Tombol "Coba Lagi" → jalankan ulang onRetry (fetch nyata)
 // Tombol "Keluar & Login Ulang" → clear session + redirect login
 function showLoadingError(msg, onRetry) {
-  const el = q('app-loading');
-  if (!el) { hideAppLoading(); return; }
-  el.style.display = 'flex'; el.style.opacity = '1';
-  const t = el.querySelector('.loading-text'); if (t) t.textContent = '';
-  const bar    = q('load-bar');
-  const barWrap = el.querySelector('.loading-bar');
-  if (bar)     bar.style.display    = 'none';
-  if (barWrap) barWrap.style.display = 'none';
+ const el = q('app-loading');
+ if (!el) { hideAppLoading(); return; }
+ el.style.display = 'flex'; el.style.opacity = '1';
+ const t = el.querySelector('.loading-text'); if (t) t.textContent = '';
+ const bar = q('load-bar');
+ const barWrap = el.querySelector('.loading-bar');
+ if (bar) bar.style.display = 'none';
+ if (barWrap) barWrap.style.display = 'none';
 
-  let errBox = q('loading-error');
-  if (!errBox) {
-    errBox = document.createElement('div');
-    errBox.id = 'loading-error';
-    errBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;padding:0 24px';
-    el.querySelector('.loading-inner').appendChild(errBox);
-  }
-  errBox.style.display = 'flex';
-  // Ganti \n dengan <br> untuk tampilan multi-baris
-  const msgHtml = esc(msg).replace(/\\n|\n/g, '<br>');
-  errBox.innerHTML = `
-    <div style="font-size:36px">⚠️</div>
-    <div style="font-size:13px;color:var(--muted);line-height:1.7;max-width:280px">${msgHtml}</div>
-    <button id="btn-retry-load"
-      style="padding:10px 24px;background:linear-gradient(135deg,#4f8ef7,#3a6fd8);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;">
-      🔄 Coba Lagi
-    </button>
-    <button onclick="forceLogout()" 
-      style="padding:8px 20px;background:rgba(255,255,255,.06);color:var(--muted);border:1px solid rgba(255,255,255,.1);border-radius:10px;font-size:13px;cursor:pointer;">
-      Keluar & Login Ulang
-    </button>`;
-  // Pasang event listener (bukan inline onclick dengan toString agar aman)
-  const retryBtn = document.getElementById('btn-retry-load');
-  if (retryBtn && onRetry) retryBtn.addEventListener('click', onRetry);
+ let errBox = q('loading-error');
+ if (!errBox) {
+ errBox = document.createElement('div');
+ errBox.id = 'loading-error';
+ errBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;padding:0 24px';
+ el.querySelector('.loading-inner').appendChild(errBox);
+ }
+ errBox.style.display = 'flex';
+ // Ganti \n dengan <br> untuk tampilan multi-baris
+ const msgHtml = esc(msg).replace(/\\n|\n/g, '<br>');
+ errBox.innerHTML = `
+ <div style="font-size:36px"></div>
+ <div style="font-size:13px;color:var(--muted);line-height:1.7;max-width:280px">${msgHtml}</div>
+ <button id="btn-retry-load"
+ style="padding:10px 24px;background:linear-gradient(135deg,#4f8ef7,#3a6fd8);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;">
+ Coba Lagi
+ </button>
+ <button onclick="forceLogout()" 
+ style="padding:8px 20px;background:rgba(255,255,255,.06);color:var(--muted);border:1px solid rgba(255,255,255,.1);border-radius:10px;font-size:13px;cursor:pointer;">
+ Keluar & Login Ulang
+ </button>`;
+ // Pasang event listener (bukan inline onclick dengan toString agar aman)
+ const retryBtn = document.getElementById('btn-retry-load');
+ if (retryBtn && onRetry) retryBtn.addEventListener('click', onRetry);
 }
 
 function hideAppLoading() {
-  const el = q('app-loading');
-  if (!el) return;
-  el.style.opacity = '0';
-  setTimeout(() => { el.style.display = 'none'; }, 300);
+ const el = q('app-loading');
+ if (!el) return;
+ el.style.opacity = '0';
+ setTimeout(() => { el.style.display = 'none'; }, 300);
 }
 
 async function forceLogout() {
-  cacheClear();
-  await sb.auth.signOut().catch(() => {});
-  currentUser = currentProfile = null;
-  hideAppLoading();
-  showPage('page-login');
+ cacheClear();
+ await sb.auth.signOut().catch(() => {});
+ currentUser = currentProfile = null;
+ hideAppLoading();
+ showPage('page-login');
 }
 
 // ── ROUTER ────────────────────────────────────────────────
 function showPage(id) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  const p = q(id);
-  if (p) { p.classList.add('active'); window.scrollTo(0, 0); }
+ document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+ const p = q(id);
+ if (p) { p.classList.add('active'); window.scrollTo(0, 0); }
 }
 
 // ── TOAST ─────────────────────────────────────────────────
 function showToast(title, msg, type = 'info') {
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.innerHTML = `<div class="t-type-bar"></div>
-    <div class="t-body"><div class="t-title">${esc(title)}</div><div class="t-msg">${esc(msg)}</div></div>
-    <button class="t-close" onclick="this.closest('.toast').remove()">×</button>`;
-  const tc = q('toast-container');
-  if (tc) tc.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 280); }, 4500);
+ const el = document.createElement('div');
+ el.className = `toast ${type}`;
+ el.innerHTML = `<div class="t-type-bar"></div>
+ <div class="t-body"><div class="t-title">${esc(title)}</div><div class="t-msg">${esc(msg)}</div></div>
+ <button class="t-close" onclick="this.closest('.toast').remove()">×</button>`;
+ const tc = q('toast-container');
+ if (tc) tc.appendChild(el);
+ requestAnimationFrame(() => el.classList.add('show'));
+ setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 280); }, 4500);
 }
 
 // ── MARKDOWN ──────────────────────────────────────────────
 function md(text) {
-  if (!text) return '';
-  return text
-    .replace(/^## (.+)$/gm,  '<h2>$1</h2>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g,     '<em>$1</em>')
-    .replace(/`(.+?)`/g,       '<code>$1</code>')
-    .replace(/^> (.+)$/gm,     '<blockquote>$1</blockquote>')
-    .replace(/^- (.+)$/gm,     '<li>$1</li>')
-    .replace(/(<li>[\s\S]*?<\/li>)+/g, '<ul>$&</ul>')
-    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-    .replace(/\|(.+)\|/g, m => {
-      const cells = m.slice(1,-1).split('|').map(c => c.trim());
-      return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
-    })
-    .replace(/(<tr>[\s\S]*?<\/tr>)+/g, '<table>$&</table>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>');
+ if (!text) return '';
+ return text
+ .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+ .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+ .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+ .replace(/\*(.+?)\*/g, '<em>$1</em>')
+ .replace(/`(.+?)`/g, '<code>$1</code>')
+ .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+ .replace(/^- (.+)$/gm, '<li>$1</li>')
+ .replace(/(<li>[\s\S]*?<\/li>)+/g, '<ul>$&</ul>')
+ .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+ .replace(/\|(.+)\|/g, m => {
+ const cells = m.slice(1,-1).split('|').map(c => c.trim());
+ return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+ })
+ .replace(/(<tr>[\s\S]*?<\/tr>)+/g, '<table>$&</table>')
+ .replace(/\n\n/g, '</p><p>')
+ .replace(/\n/g, '<br>');
 }
 
 // ════════════════════════════════════════════════════════════
-//  AUTH CORE — FIX UTAMA ADA DI SINI
+// AUTH CORE — FIX UTAMA ADA DI SINI
 // ════════════════════════════════════════════════════════════
 
 // OPTIMIZED — fetchProfileSafe v4
@@ -155,69 +155,69 @@ function md(text) {
 // - Auto-retry dengan backoff saat koneksi lambat
 // - Tidak ada fake timeout / setTimeout palsu
 async function fetchProfileSafe(user) {
-  const isOAuth = (user.app_metadata && user.app_metadata.provider === 'google')
-    || (user.app_metadata && user.app_metadata.providers && user.app_metadata.providers.includes('google'));
+ const isOAuth = (user.app_metadata && user.app_metadata.provider === 'google')
+ || (user.app_metadata && user.app_metadata.providers && user.app_metadata.providers.includes('google'));
 
-  console.log('[Auth] fetchProfileSafe:', user.email, '| OAuth:', isOAuth);
+ console.log('[Auth] fetchProfileSafe:', user.email, '| OAuth:', isOAuth);
 
-  // ── LANGKAH 0: Cek localStorage cache (tampil instan < 10ms) ──
-  const cached = profileCacheGet(user.id);
-  if (cached) {
-    console.log('[Auth] Profile dari localStorage cache — tampil instan');
-    // Refresh dari server di background (tidak blokir UI)
-    getProfile(user.id).then(fresh => {
-      if (fresh && currentProfile && fresh.user_id === currentProfile.user_id) {
-        const changed = JSON.stringify(fresh) !== JSON.stringify(currentProfile);
-        if (changed) {
-          console.log('[Auth] Profile diperbarui dari server (background refresh)');
-          currentProfile = fresh;
-          // Update UI jika status berubah (misal: pending → approved)
-          if (fresh.status !== cached.status || fresh.role !== cached.role) {
-            routeProfile(fresh);
-          }
-        }
-      }
-    }).catch(() => {});
-    return cached;
-  }
+ // ── LANGKAH 0: Cek localStorage cache (tampil instan < 10ms) ──
+ const cached = profileCacheGet(user.id);
+ if (cached) {
+ console.log('[Auth] Profile dari localStorage cache — tampil instan');
+ // Refresh dari server di background (tidak blokir UI)
+ getProfile(user.id).then(fresh => {
+ if (fresh && currentProfile && fresh.user_id === currentProfile.user_id) {
+ const changed = JSON.stringify(fresh) !== JSON.stringify(currentProfile);
+ if (changed) {
+ console.log('[Auth] Profile diperbarui dari server (background refresh)');
+ currentProfile = fresh;
+ // Update UI jika status berubah (misal: pending → approved)
+ if (fresh.status !== cached.status || fresh.role !== cached.role) {
+ routeProfile(fresh);
+ }
+ }
+ }
+ }).catch(() => {});
+ return cached;
+ }
 
-  // ── LANGKAH 1: Fetch dari server dengan auto-retry ──
-  console.log('[Auth] Tidak ada cache, fetch dari server...');
-  let profile = null;
-  try {
-    profile = await withRetry(
-      function() { return getProfile(user.id); },
-      { maxAttempts: 3, baseDelay: 400, label: 'fetchProfileSafe' }
-    );
-  } catch(e) {
-    console.error('[Auth] fetchProfileSafe: semua retry gagal:', e.message);
-  }
+ // ── LANGKAH 1: Fetch dari server dengan auto-retry ──
+ console.log('[Auth] Tidak ada cache, fetch dari server...');
+ let profile = null;
+ try {
+ profile = await withRetry(
+ function() { return getProfile(user.id); },
+ { maxAttempts: 3, baseDelay: 400, label: 'fetchProfileSafe' }
+ );
+ } catch(e) {
+ console.error('[Auth] fetchProfileSafe: semua retry gagal:', e.message);
+ }
 
-  if (profile) {
-    console.log('[Auth] Profil ditemukan dari server');
-    return profile;
-  }
+ if (profile) {
+ console.log('[Auth] Profil ditemukan dari server');
+ return profile;
+ }
 
-  // ── LANGKAH 2: Tunggu DB trigger lalu coba lagi ──
-  console.log('[Auth] Profil belum ada, tunggu DB trigger 800ms...');
-  await new Promise(function(r) { setTimeout(r, 800); });
+ // ── LANGKAH 2: Tunggu DB trigger lalu coba lagi ──
+ console.log('[Auth] Profil belum ada, tunggu DB trigger 800ms...');
+ await new Promise(function(r) { setTimeout(r, 800); });
 
-  profile = await getProfile(user.id);
-  if (profile) {
-    console.log('[Auth] Profil ditemukan setelah tunggu DB trigger');
-    return profile;
-  }
+ profile = await getProfile(user.id);
+ if (profile) {
+ console.log('[Auth] Profil ditemukan setelah tunggu DB trigger');
+ return profile;
+ }
 
-  // ── LANGKAH 3: Buat profil otomatis ──
-  console.log('[Auth] Profil tidak ada, buat otomatis...');
-  profile = await ensureProfile(user);
-  if (profile) {
-    console.log('[Auth] Profil berhasil dibuat otomatis');
-    return profile;
-  }
+ // ── LANGKAH 3: Buat profil otomatis ──
+ console.log('[Auth] Profil tidak ada, buat otomatis...');
+ profile = await ensureProfile(user);
+ if (profile) {
+ console.log('[Auth] Profil berhasil dibuat otomatis');
+ return profile;
+ }
 
-  console.error('[Auth] fetchProfileSafe: semua upaya gagal');
-  return null;
+ console.error('[Auth] fetchProfileSafe: semua upaya gagal');
+ return null;
 }
 
 // OPTIMIZED — initApp v4
@@ -226,1446 +226,1461 @@ async function fetchProfileSafe(user) {
 // - Semua loading berdasarkan response server nyata
 // - Handle offline dengan pesan yang jelas
 async function initApp(session) {
-  if (!session) {
-    console.log('[Auth] initApp: session null → ke login');
-    hideAppLoading();
-    showPage('page-login');
-    return;
-  }
+ if (!session) {
+ console.log('[Auth] initApp: session null → ke login');
+ hideAppLoading();
+ showPage('page-login');
+ return;
+ }
 
-  console.log('[Auth] initApp: session ada untuk', session.user.email);
-  currentUser = session.user;
+ console.log('[Auth] initApp: session ada untuk', session.user.email);
+ currentUser = session.user;
 
-  // ── CEK CACHE DULU: tampilkan UI tanpa delay ──
-  const cachedProfile = profileCacheGet(session.user.id);
-  if (cachedProfile) {
-    console.log('[Auth] initApp: pakai cache → UI tampil instan');
-    currentProfile = cachedProfile;
-    routeProfile(cachedProfile);
-    // Fetch terbaru di background — tidak blokir
-    fetchProfileSafe(session.user).catch(() => {});
-    return;
-  }
+ // Boot realtime sekali saja di sini — sebelum apapun
+ rtBoot();
 
-  // ── TIDAK ADA CACHE: tampilkan loading screen yang real ──
-  // Periksa koneksi terlebih dahulu
-  if (!isOnline()) {
-    showLoadingError(
-      'Tidak ada koneksi internet.\nHubungkan ke WiFi atau aktifkan data seluler, lalu coba lagi.',
-      function() { location.reload(); }
-    );
-    return;
-  }
+ // ── CEK CACHE DULU: tampilkan UI tanpa delay ──
+ const cachedProfile = profileCacheGet(session.user.id);
+ if (cachedProfile) {
+ console.log('[Auth] initApp: pakai cache → UI tampil instan');
+ currentProfile = cachedProfile;
+ routeProfile(cachedProfile);
+ fetchProfileSafe(session.user).catch(() => {});
+ return;
+ }
 
-  showAppLoading('Memuat profil Anda...');
+ if (!isOnline()) {
+ showLoadingError(
+ 'Tidak ada koneksi internet.\nHubungkan ke WiFi atau aktifkan data seluler, lalu coba lagi.',
+ function() { location.reload(); }
+ );
+ return;
+ }
 
-  // Timeout 8 detik — semua berdasarkan response server nyata
-  const profilePromise = fetchProfileSafe(session.user);
-  const timeoutPromise = new Promise(function(resolve) {
-    setTimeout(function() { resolve('TIMEOUT'); }, 8000);
-  });
+ showAppLoading('Memuat profil Anda...');
 
-  const result = await Promise.race([profilePromise, timeoutPromise]);
+ const profilePromise = fetchProfileSafe(session.user);
+ const timeoutPromise = new Promise(function(resolve) {
+ setTimeout(function() { resolve('TIMEOUT'); }, 8000);
+ });
 
-  if (result === 'TIMEOUT') {
-    console.error('[Auth] initApp TIMEOUT — profile fetch melebihi 8 detik');
-    showLoadingError(
-      'Koneksi terputus, mencoba kembali...\nServer lambat merespons. Periksa koneksi internet Anda.',
-      function() {
-        showAppLoading('Menghubungkan ke server...');
-        initApp(session);
-      }
-    );
-    return;
-  }
+ const result = await Promise.race([profilePromise, timeoutPromise]);
 
-  const profile = result;
+ if (result === 'TIMEOUT') {
+ console.error('[Auth] initApp TIMEOUT');
+ showLoadingError(
+ 'Koneksi terputus.\nServer lambat merespons. Periksa koneksi internet Anda.',
+ function() { showAppLoading('Menghubungkan ke server...'); initApp(session); }
+ );
+ return;
+ }
 
-  if (!profile) {
-    console.error('[Auth] initApp: profile null setelah semua upaya');
-    showLoadingError(
-      'Profil tidak ditemukan.\nKemungkinan akun belum terdaftar atau ada masalah database.',
-      async function() {
-        showAppLoading('Mencoba ulang...');
-        await initApp(session);
-      }
-    );
-    return;
-  }
+ const profile = result;
 
-  console.log('[Auth] initApp: sukses → role:', profile.role, '| status:', profile.status);
-  currentProfile = profile;
+ if (!profile) {
+ console.error('[Auth] initApp: profile null');
+ showLoadingError(
+ 'Profil tidak ditemukan.\nKemungkinan akun belum terdaftar atau ada masalah database.',
+ async function() { showAppLoading('Mencoba ulang...'); await initApp(session); }
+ );
+ return;
+ }
 
-  // Cek Google user yang belum set nama manual
-  const isGoogle = (session.user.app_metadata?.provider === 'google') ||
-    (session.user.app_metadata?.providers?.includes('google'));
-  if (isGoogle && !profile.nama_manual) {
-    _googleNameSession = session;
-    if (q('google-nama-input')) {
-      q('google-nama-input').value = profile.nama_lengkap || session.user.user_metadata?.full_name || '';
-    }
-    hideAppLoading();
-    showPage('page-google-name');
-    return;
-  }
+ console.log('[Auth] initApp: sukses → role:', profile.role, '| status:', profile.status);
+ currentProfile = profile;
 
-  routeProfile(profile);
+ const isGoogle = (session.user.app_metadata?.provider === 'google') ||
+ (session.user.app_metadata?.providers?.includes('google'));
+ if (isGoogle && !profile.nama_manual) {
+ _googleNameSession = session;
+ if (q('google-nama-input')) {
+ q('google-nama-input').value = profile.nama_lengkap || session.user.user_metadata?.full_name || '';
+ }
+ hideAppLoading();
+ showPage('page-google-name');
+ return;
+ }
+
+ routeProfile(profile);
 }
 
 function routeProfile(p) {
-  hideAppLoading();
-  if (p.role === 'admin') {
-    showToast('Selamat Datang', `Admin ${p.nama_lengkap}`, 'success');
-    initAdmin(); showPage('page-admin');
-  } else if (p.status === 'approved') {
-    showToast('Halo', `Selamat datang, ${p.nama_lengkap}`, 'success');
-    initDashboard(); showPage('page-dashboard');
-  } else if (p.status === 'pending') {
-    const nameEl = q('pending-name');
-    if (nameEl) nameEl.textContent = p.nama_lengkap;
-    const emailEl = q('pending-email');
-    if (emailEl) emailEl.textContent = p.email;
-    showPage('page-pending');
-    startPendingListener(p.user_id);
-  } else {
-    // Tampilkan alasan penolakan jika ada
-    const reasonBox  = q('rejection-reason-box');
-    const reasonText = q('rejection-reason-text');
-    if (reasonBox && reasonText) {
-      if (p.rejection_reason) {
-        reasonText.textContent = p.rejection_reason;
-        reasonBox.style.display = 'block';
-      } else {
-        reasonBox.style.display = 'none';
-      }
-    }
-    showPage('page-rejected');
-  }
+ hideAppLoading();
+ if (p.role === 'admin') {
+ showToast('Selamat Datang', `Admin ${p.nama_lengkap}`, 'success');
+ initAdmin(); showPage('page-admin');
+ } else if (p.status === 'approved') {
+ showToast('Halo', `Selamat datang, ${p.nama_lengkap}`, 'success');
+ initDashboard(); showPage('page-dashboard');
+ } else if (p.status === 'pending') {
+ const nameEl = q('pending-name');
+ if (nameEl) nameEl.textContent = p.nama_lengkap;
+ const emailEl = q('pending-email');
+ if (emailEl) emailEl.textContent = p.email;
+ showPage('page-pending');
+ startPendingListener(p.user_id);
+ } else {
+ // Tampilkan alasan penolakan jika ada
+ const reasonBox = q('rejection-reason-box');
+ const reasonText = q('rejection-reason-text');
+ if (reasonBox && reasonText) {
+ if (p.rejection_reason) {
+ reasonText.textContent = p.rejection_reason;
+ reasonBox.style.display = 'block';
+ } else {
+ reasonBox.style.display = 'none';
+ }
+ }
+ showPage('page-rejected');
+ }
 }
 
 let _pendingChannel = null;
 function startPendingListener(userId) {
-  if (_pendingChannel) { try { _pendingChannel.unsubscribe(); } catch(_){} }
-  _pendingChannel = sb.channel('pending-status-' + userId)
-    .on('postgres_changes', {
-      event: 'UPDATE', schema: 'public', table: 'profiles',
-      filter: `user_id=eq.${userId}`
-    }, async payload => {
-      const status = payload.new?.status;
-      if (status === 'approved') {
-        if (_pendingChannel) { _pendingChannel.unsubscribe(); _pendingChannel = null; }
-        currentProfile = payload.new;
-        showToast('Disetujui! 🎉', 'Akun Anda telah disetujui admin.', 'success');
-        initDashboard(); showPage('page-dashboard');
-      } else if (status === 'rejected') {
-        if (_pendingChannel) { _pendingChannel.unsubscribe(); _pendingChannel = null; }
-        showPage('page-rejected');
-      }
-    })
-    .subscribe();
+ if (_pendingChannel) { try { _pendingChannel.unsubscribe(); } catch(_){} }
+ _pendingChannel = sb.channel('pending-status-' + userId)
+ .on('postgres_changes', {
+ event: 'UPDATE', schema: 'public', table: 'profiles',
+ filter: `user_id=eq.${userId}`
+ }, async payload => {
+ const status = payload.new?.status;
+ if (status === 'approved') {
+ if (_pendingChannel) { _pendingChannel.unsubscribe(); _pendingChannel = null; }
+ currentProfile = payload.new;
+ showToast('Disetujui', 'Akun Anda telah disetujui admin.', 'success');
+ initDashboard(); showPage('page-dashboard');
+ } else if (status === 'rejected') {
+ if (_pendingChannel) { _pendingChannel.unsubscribe(); _pendingChannel = null; }
+ showPage('page-rejected');
+ }
+ })
+ .subscribe();
 }
 
 // ════════════════════════════════════════════════════════════
-//  AUTH UI — TABS, LOGIN, REGISTER, OTP
+// AUTH UI — TABS, LOGIN, REGISTER, OTP
 // ════════════════════════════════════════════════════════════
 
 let authTab = 'login';
 function switchTab(tab) {
-  authTab = tab;
-  q('login-form').style.display    = tab === 'login'    ? 'block' : 'none';
-  q('register-form').style.display = tab === 'register' ? 'block' : 'none';
-  q('tab-masuk').classList.toggle('active', tab === 'login');
-  q('tab-daftar').classList.toggle('active', tab === 'register');
-  if (tab === 'register') setRole('siswa');
+ authTab = tab;
+ q('login-form').style.display = tab === 'login' ? 'block' : 'none';
+ q('register-form').style.display = tab === 'register' ? 'block' : 'none';
+ q('tab-masuk').classList.toggle('active', tab === 'login');
+ q('tab-daftar').classList.toggle('active', tab === 'register');
+ if (tab === 'register') setRole('siswa');
 }
 
 function setRole(role) {
-  selectedRole = role;
-  ['role-siswa','role-admin'].forEach(id => {
-    const el = q(id); if (!el) return;
-    el.classList.toggle('role-active', (id === 'role-siswa' && role === 'siswa') || (id === 'role-admin' && role === 'admin'));
-    el.classList.toggle('siswa-active', id === 'role-siswa' && role === 'siswa');
-    el.classList.toggle('admin-active', id === 'role-admin' && role === 'admin');
-  });
-  const sw = q('secret-wrap'); if (sw) sw.style.display = role === 'admin' ? 'block' : 'none';
+ selectedRole = role;
+ ['role-siswa','role-admin'].forEach(id => {
+ const el = q(id); if (!el) return;
+ el.classList.toggle('role-active', (id === 'role-siswa' && role === 'siswa') || (id === 'role-admin' && role === 'admin'));
+ el.classList.toggle('siswa-active', id === 'role-siswa' && role === 'siswa');
+ el.classList.toggle('admin-active', id === 'role-admin' && role === 'admin');
+ });
+ const sw = q('secret-wrap'); if (sw) sw.style.display = role === 'admin' ? 'block' : 'none';
 }
 
 async function handleLogin(e) {
-  e.preventDefault();
-  const btn   = q('btn-login');
-  const email = q('login-email').value.trim();
-  const pw    = q('login-password').value;
-  if (!email || !pw) { showToast('Error', 'Email dan password wajib diisi.', 'error'); return; }
+ e.preventDefault();
+ const btn = q('btn-login');
+ const email = q('login-email').value.trim();
+ const pw = q('login-password').value;
+ if (!email || !pw) { showToast('Error', 'Email dan password wajib diisi.', 'error'); return; }
 
-  setLoading(btn, true);
-  const res = await loginUser(email, pw);
-  setLoading(btn, false);
+ setLoading(btn, true);
+ const res = await loginUser(email, pw);
+ setLoading(btn, false);
 
-  if (!res.success) { showToast('Gagal Masuk', res.error, 'error'); return; }
+ if (!res.success) { showToast('Gagal Masuk', res.error, 'error'); return; }
 
-  currentUser = res.user; currentProfile = res.profile;
-  showAppLoading('Memuat...');
-  routeProfile(res.profile);
+ currentUser = res.user; currentProfile = res.profile;
+ showAppLoading('Memuat...');
+ routeProfile(res.profile);
 }
 
 async function handleGoogleLogin() {
-  const btn = q('btn-google');
-  if (btn) btn.disabled = true;
-  const res = await loginWithGoogle();
-  if (!res.success) {
-    if (btn) btn.disabled = false;
-    showToast('Error', res.error || 'Gagal login Google.', 'error');
-  }
-  // Jika sukses → halaman akan redirect, tidak perlu action lain
+ const btn = q('btn-google');
+ if (btn) btn.disabled = true;
+ const res = await loginWithGoogle();
+ if (!res.success) {
+ if (btn) btn.disabled = false;
+ showToast('Error', res.error || 'Gagal login Google.', 'error');
+ }
+ // Jika sukses → halaman akan redirect, tidak perlu action lain
 }
 
 async function handleRegister(e) {
-  e.preventDefault();
-  const btn   = q('btn-register');
-  const nama  = q('reg-nama').value.trim();
-  const email = q('reg-email').value.trim();
-  const pw    = q('reg-password').value;
-  const kelas = q('reg-kelas')?.value || '8F';
+ e.preventDefault();
+ const btn = q('btn-register');
+ const nama = q('reg-nama').value.trim();
+ const email = q('reg-email').value.trim();
+ const pw = q('reg-password').value;
+ const kelas = q('reg-kelas')?.value || '8F';
 
-  if (pw.length < 6) { showToast('Error', 'Password minimal 6 karakter.', 'error'); return; }
-  if (!kelas) { showToast('Error', 'Pilih kelas terlebih dahulu.', 'error'); return; }
-  if (selectedRole === 'admin' && q('reg-secret')?.value.trim() !== ADMIN_SECRET_CODE) {
-    showToast('Kode Salah', 'Kode rahasia admin tidak valid.', 'error'); return;
-  }
+ if (pw.length < 6) { showToast('Error', 'Password minimal 6 karakter.', 'error'); return; }
+ if (!kelas) { showToast('Error', 'Pilih kelas terlebih dahulu.', 'error'); return; }
+ if (selectedRole === 'admin' && q('reg-secret')?.value.trim() !== ADMIN_SECRET_CODE) {
+ showToast('Kode Salah', 'Kode rahasia admin tidak valid.', 'error'); return;
+ }
 
-  // Validasi terms checkbox
-  const termsChecked = q('reg-terms')?.checked;
-  const termsErr = q('terms-error');
-  if (!termsChecked) {
-    if (termsErr) termsErr.style.display = 'block';
-    showToast('Perlu Persetujuan', 'Centang Syarat dan Ketentuan untuk melanjutkan.', 'warning');
-    return;
-  }
-  if (termsErr) termsErr.style.display = 'none';
+ // Validasi terms checkbox
+ const termsChecked = q('reg-terms')?.checked;
+ const termsErr = q('terms-error');
+ if (!termsChecked) {
+ if (termsErr) termsErr.style.display = 'block';
+ showToast('Perlu Persetujuan', 'Centang Syarat dan Ketentuan untuk melanjutkan.', 'warning');
+ return;
+ }
+ if (termsErr) termsErr.style.display = 'none';
 
-  setLoading(btn, true);
-  const res = await initiateRegister(nama, email, pw, kelas, selectedRole, true);
-  setLoading(btn, false);
+ setLoading(btn, true);
+ const res = await initiateRegister(nama, email, pw, kelas, selectedRole, true);
+ setLoading(btn, false);
 
-  if (!res.success) { showToast('Error', res.error, 'error'); return; }
-  q('otp-email-display').textContent = email;
-  q('otp-role-info').textContent = selectedRole === 'admin' ? 'Admin' : 'Siswa';
-  showPage('page-otp');
-  startOtpTimer();
+ if (!res.success) { showToast('Error', res.error, 'error'); return; }
+ q('otp-email-display').textContent = email;
+ q('otp-role-info').textContent = selectedRole === 'admin' ? 'Admin' : 'Siswa';
+ showPage('page-otp');
+ startOtpTimer();
 }
 
 // ── OTP ───────────────────────────────────────────────────
 let otpInterval = null;
 function startOtpTimer() {
-  let s = 300;
-  const el = q('otp-countdown');
-  if (otpInterval) clearInterval(otpInterval);
-  otpInterval = setInterval(() => {
-    s--;
-    if (el) el.textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
-    if (s <= 0) { clearInterval(otpInterval); if (el) el.textContent = 'Kadaluarsa'; showToast('OTP Kadaluarsa','Daftar ulang.','warning'); }
-  }, 1000);
+ let s = 300;
+ const el = q('otp-countdown');
+ if (otpInterval) clearInterval(otpInterval);
+ otpInterval = setInterval(() => {
+ s--;
+ if (el) el.textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+ if (s <= 0) { clearInterval(otpInterval); if (el) el.textContent = 'Kadaluarsa'; showToast('OTP Kadaluarsa','Daftar ulang.','warning'); }
+ }, 1000);
 }
 
 function otpInput(e, i) {
-  e.target.value = e.target.value.replace(/\D/g, '').slice(-1);
-  e.target.classList.toggle('on', !!e.target.value);
-  if (e.target.value && i < 7) q(`otp-${i+1}`)?.focus();
-  if ([...Array(8)].every((_,j) => q(`otp-${j}`)?.value)) setTimeout(submitOTP, 200);
+ e.target.value = e.target.value.replace(/\D/g, '').slice(-1);
+ e.target.classList.toggle('on', !!e.target.value);
+ if (e.target.value && i < 7) q(`otp-${i+1}`)?.focus();
+ if ([...Array(8)].every((_,j) => q(`otp-${j}`)?.value)) setTimeout(submitOTP, 200);
 }
 function otpKey(e, i) {
-  if (e.key === 'Backspace' && !e.target.value && i > 0) q(`otp-${i-1}`)?.focus();
+ if (e.key === 'Backspace' && !e.target.value && i > 0) q(`otp-${i-1}`)?.focus();
 }
 
 async function submitOTP() {
-  const otp = [...Array(8)].map((_,i) => q(`otp-${i}`)?.value || '').join('');
-  if (otp.length < 8) { showToast('Error', 'Isi 8 digit OTP.', 'error'); return; }
+ const otp = [...Array(8)].map((_,i) => q(`otp-${i}`)?.value || '').join('');
+ if (otp.length < 8) { showToast('Error', 'Isi 8 digit OTP.', 'error'); return; }
 
-  const btn = q('btn-verify-otp');
-  setLoading(btn, true);
-  showAppLoading('Memverifikasi OTP...');
+ const btn = q('btn-verify-otp');
+ setLoading(btn, true);
+ showAppLoading('Memverifikasi OTP...');
 
-  const res = await verifyOTPAndRegister(otp);
-  setLoading(btn, false);
-  hideAppLoading();
+ const res = await verifyOTPAndRegister(otp);
+ setLoading(btn, false);
+ hideAppLoading();
 
-  if (!res.success) {
-    showToast('OTP Gagal', res.error, 'error');
-    [...Array(8)].forEach((_,i) => { const b = q(`otp-${i}`); if (b) { b.value=''; b.classList.remove('on'); } });
-    q('otp-0')?.focus();
-    return;
-  }
+ if (!res.success) {
+ showToast('OTP Gagal', res.error, 'error');
+ [...Array(8)].forEach((_,i) => { const b = q(`otp-${i}`); if (b) { b.value=''; b.classList.remove('on'); } });
+ q('otp-0')?.focus();
+ return;
+ }
 
-  clearInterval(otpInterval);
-  currentUser = res.user; currentProfile = res.profile;
+ clearInterval(otpInterval);
+ currentUser = res.user; currentProfile = res.profile;
 
-  if (res.profile?.role === 'admin') {
-    showToast('Berhasil!', `Selamat datang, ${res.profile.nama_lengkap}! 🎉`, 'success');
-    initAdmin(); showPage('page-admin');
-  } else {
-    showToast('Berhasil!', 'Akun dibuat. Menunggu persetujuan admin.', 'success');
-    showPage('page-pending');
-  }
+ if (res.profile?.role === 'admin') {
+ showToast('Berhasil', `Selamat datang, ${res.profile.nama_lengkap}! `, 'success');
+ initAdmin(); showPage('page-admin');
+ } else {
+ showToast('Berhasil', 'Akun dibuat. Menunggu persetujuan admin.', 'success');
+ showPage('page-pending');
+ }
 }
 
 async function handleResendOTP() {
-  const res = await resendOTPCode();
-  if (!res.success) { showToast('Error', res.error, 'error'); return; }
-  [...Array(8)].forEach((_,i) => { const b = q(`otp-${i}`); if (b) { b.value=''; b.classList.remove('on'); } });
-  q('otp-0')?.focus();
-  startOtpTimer();
-  showToast('Terkirim', 'OTP baru dikirim ke email.', 'info');
+ const res = await resendOTPCode();
+ if (!res.success) { showToast('Error', res.error, 'error'); return; }
+ [...Array(8)].forEach((_,i) => { const b = q(`otp-${i}`); if (b) { b.value=''; b.classList.remove('on'); } });
+ q('otp-0')?.focus();
+ startOtpTimer();
+ showToast('Terkirim', 'OTP baru dikirim ke email.', 'info');
 }
 
 async function checkStatus() {
-  if (!currentUser) return;
-  showToast('Mengecek...', 'Memeriksa status akun.', 'info');
-  const p = await getProfile(currentUser.id);
-  if (!p) { showToast('Error','Gagal cek status.','error'); return; }
-  currentProfile = p;
-  if (p.status === 'approved')  { initDashboard(); showPage('page-dashboard'); showToast('Disetujui!','Akun Anda disetujui 🎉','success'); }
-  else if (p.status === 'rejected') showPage('page-rejected');
-  else showToast('Masih Pending','Akun masih diverifikasi admin.','warning');
+ if (!currentUser) return;
+ showToast('Mengecek...', 'Memeriksa status akun.', 'info');
+ const p = await getProfile(currentUser.id);
+ if (!p) { showToast('Error','Gagal cek status.','error'); return; }
+ currentProfile = p;
+ if (p.status === 'approved') { initDashboard(); showPage('page-dashboard'); showToast('Disetujui!','Akun Anda disetujui ','success'); }
+ else if (p.status === 'rejected') showPage('page-rejected');
+ else showToast('Masih Pending','Akun masih diverifikasi admin.','warning');
 }
 
 // ════════════════════════════════════════════════════════════
-//  DASHBOARD
+// DASHBOARD
 // ════════════════════════════════════════════════════════════
 
 async function initDashboard() {
-  const p = currentProfile;
-  if (p) {
-    q('dash-name').textContent   = p.nama_lengkap;
-    q('dash-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase();
-    const h = new Date().getHours();
-    q('dash-greeting').textContent =
-      h < 11 ? 'Selamat Pagi' : h < 15 ? 'Selamat Siang' : h < 18 ? 'Selamat Sore' : 'Selamat Malam';
-    const kelasEl = q('stat-kelas');
-    if (kelasEl) kelasEl.textContent = p.kelas || '8F';
-  }
-  await loadMapel();
-  rtMapel(() => { cacheDel('mapel:'); loadMapel(); });
-  rtBroadcast(broadcast => showBroadcastModal(broadcast));
-  // Realtime ratings untuk update rata-rata di dashboard
-  rtRatings(() => {
-    // Jika halaman rating sedang aktif, refresh
-    if (q('page-rating')?.classList.contains('active')) loadPublicRatings();
-    if (q('admin-ratings')?.style.display !== 'none') loadAdminRatings();
-  });
-  startPresenceTracking('dashboard');
+ const p = currentProfile;
+ if (p) {
+ q('dash-name').textContent = p.nama_lengkap;
+ q('dash-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase();
+ const h = new Date().getHours();
+ q('dash-greeting').textContent =
+ h < 11 ? 'Selamat Pagi' : h < 15 ? 'Selamat Siang' : h < 18 ? 'Selamat Sore' : 'Selamat Malam';
+ const kelasEl = q('stat-kelas');
+ if (kelasEl) kelasEl.textContent = p.kelas || '8F';
+ }
+ await loadMapel();
+
+ // Daftarkan listener via RT bus — tidak override channel lain
+ rtOn('mapel', () => { cacheDel('mapel:'); loadMapel(); });
+ rtOn('broadcasts', payload => {
+ if (payload.eventType === 'INSERT' && payload.new) showBroadcastModal(payload.new);
+ });
+ rtOn('ratings', () => {
+   if (q('page-rating')?.classList.contains('active')) loadPublicRatings(true);
+ });
+
+ startPresenceTracking('dashboard');
+ // Polling broadcast sebagai fallback
+ startBroadcastPolling(b => showBroadcastModal(b));
 }
 
 async function loadMapel() {
-  const grid = q('mapel-grid'); if (!grid) return;
+ const grid = q('mapel-grid'); if (!grid) return;
 
-  // Skeleton loading nyata — animasi shimmer, bukan spinner kosong
-  grid.innerHTML = [...Array(6)].map(() => `
-    <div class="mapel-card skeleton-card" aria-label="Memuat...">
-      <div class="skeleton skeleton-icon"></div>
-      <div class="skeleton skeleton-line lg"></div>
-      <div class="skeleton skeleton-line sm"></div>
-    </div>`).join('');
+ // Skeleton loading nyata — animasi shimmer, bukan spinner kosong
+ grid.innerHTML = [...Array(6)].map(() => `
+ <div class="mapel-card skeleton-card" aria-label="Memuat...">
+ <div class="skeleton skeleton-icon"></div>
+ <div class="skeleton skeleton-line lg"></div>
+ <div class="skeleton skeleton-line sm"></div>
+ </div>`).join('');
 
-  const { data, error } = await getMapelCached();
+ const { data, error } = await getMapelCached();
 
-  if (error) {
-    grid.innerHTML = `<div class="empty-full" style="grid-column:1/-1">
-      <div class="e-icon">⚠️</div>
-      <p style="color:var(--red);margin-bottom:12px">Gagal memuat mata pelajaran.</p>
-      <button class="btn btn-ghost btn-sm" onclick="loadMapel()">🔄 Coba Lagi</button>
-    </div>`; return;
-  }
+ if (error) {
+ grid.innerHTML = `<div class="empty-full" style="grid-column:1/-1">
+ <div class="e-icon icon-warn"></div>
+ <p style="color:var(--red);margin-bottom:12px">Gagal memuat mata pelajaran.</p>
+ <button class="btn btn-ghost btn-sm" onclick="loadMapel()">Coba Lagi</button>
+ </div>`; return;
+ }
 
-  // Hitung status terbuka/terkunci berdasarkan jadwal + is_locked
-  const now = Date.now();
-  const processed = (data||[]).map(m => {
-    let isOpen = m._open !== undefined ? m._open : !m.is_locked;
-    let lockMsg = '';
-    if (m.waktu_buka && !isOpen) {
-      const buka = new Date(m.waktu_buka);
-      lockMsg = `Buka ${buka.toLocaleString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
-    }
-    if (m.waktu_tutup && isOpen && new Date(m.waktu_tutup).getTime() > now) {
-      const tutup = new Date(m.waktu_tutup);
-      lockMsg = `Tutup ${tutup.toLocaleString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
-    }
-    return { ...m, isOpen, lockMsg };
-  });
+ // Hitung status terbuka/terkunci berdasarkan jadwal + is_locked
+ const now = Date.now();
+ const processed = (data||[]).map(m => {
+ let isOpen = m._open !== undefined ? m._open : !m.is_locked;
+ let lockMsg = '';
+ if (m.waktu_buka && !isOpen) {
+ const buka = new Date(m.waktu_buka);
+ lockMsg = `Buka ${buka.toLocaleString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
+ }
+ if (m.waktu_tutup && isOpen && new Date(m.waktu_tutup).getTime() > now) {
+ const tutup = new Date(m.waktu_tutup);
+ lockMsg = `Tutup ${tutup.toLocaleString('id-ID', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}`;
+ }
+ return { ...m, isOpen, lockMsg };
+ });
 
-  const avail = processed.filter(m => m.isOpen).length;
-  const te = q('stat-total'); if (te) te.textContent = processed.length;
-  const ae = q('stat-avail'); if (ae) ae.textContent = avail;
+ const avail = processed.filter(m => m.isOpen).length;
+ const te = q('stat-total'); if (te) te.textContent = processed.length;
+ const ae = q('stat-avail'); if (ae) ae.textContent = avail;
 
-  if (!processed.length) {
-    grid.innerHTML = `<div class="empty-full" style="grid-column:1/-1"><div class="e-icon">📭</div><p>Belum ada mata pelajaran.</p></div>`;
-    return;
-  }
+ if (!processed.length) {
+ grid.innerHTML = `<div class="empty-full" style="grid-column:1/-1"><div class="e-icon icon-empty"></div><p>Belum ada mata pelajaran.</p></div>`;
+ return;
+ }
 
-  grid.innerHTML = processed.map((m, i) => `
-    <div class="mapel-card ${m.isOpen?'':'locked'}"
-      onclick="${m.isOpen ? `showDisclaimer('${m.id}','${esc(m.nama)}','${m.icon}')` : `showLockedMsg('${esc(m.nama)}','${esc(m.lockMsg)}')`}"
-      style="animation-delay:${i*.045}s;--card-accent:linear-gradient(135deg,${m.color_from},${m.color_to})"
-      title="${m.isOpen?'Buka kisi-kisi':'Terkunci'}">
-      ${m.isOpen ? '' : '<span class="mapel-lock-icon"></span>'}
-      <span class="mapel-icon">${m.icon}</span>
-      <div class="mapel-name">${esc(m.nama)}</div>
-      <div class="mapel-status ${m.isOpen?'avail':'lock'}">
-        <span class="mapel-dot"></span>${m.isOpen ? 'Tersedia' : (m.lockMsg || 'Terkunci')}
-      </div>
-    </div>`).join('');
+ grid.innerHTML = processed.map((m, i) => `
+ <div class="mapel-card ${m.isOpen?'':'locked'}"
+ onclick="${m.isOpen ? `showDisclaimer('${m.id}','${esc(m.nama)}','${m.icon}')` : `showLockedMsg('${esc(m.nama)}','${esc(m.lockMsg)}')`}"
+ style="animation-delay:${i*.045}s;--card-accent:linear-gradient(135deg,${m.color_from},${m.color_to})"
+ title="${m.isOpen?'Buka kisi-kisi':'Terkunci'}">
+ ${m.isOpen ? '' : '<span class="mapel-lock-icon"></span>'}
+ <span class="mapel-icon">${m.icon}</span>
+ <div class="mapel-name">${esc(m.nama)}</div>
+ <div class="mapel-status ${m.isOpen?'avail':'lock'}">
+ <span class="mapel-dot"></span>${m.isOpen ? 'Tersedia' : (m.lockMsg || 'Terkunci')}
+ </div>
+ </div>`).join('');
 
-  // Auto-refresh setiap 60 detik untuk update status jadwal otomatis
-  clearTimeout(_mapelRefreshTimer);
-  _mapelRefreshTimer = setTimeout(() => {
-    cacheDel('mapel:');
-    loadMapel();
-  }, 60000);
+ // Auto-refresh setiap 60 detik untuk update status jadwal otomatis
+ clearTimeout(_mapelRefreshTimer);
+ _mapelRefreshTimer = setTimeout(() => {
+ cacheDel('mapel:');
+ loadMapel();
+ }, 60000);
 }
 
 let _mapelRefreshTimer = null;
 
 function showLockedMsg(nama, msg) {
-  const detail = msg || 'Belum dibuka oleh admin.';
-  showToast('Terkunci 🔒', `${nama} — ${detail}`, 'warning');
+ const detail = msg || 'Belum dibuka oleh admin.';
+ showToast('Terkunci', `${nama} — ${detail}`, 'warning');
 }
 
 // ── DISCLAIMER ────────────────────────────────────────────
 function showDisclaimer(id, nama, icon) {
-  q('disc-icon').textContent = icon;
-  q('disc-name').textContent = nama;
-  q('btn-disc-ok').onclick   = () => { closeModal('modal-disclaimer'); openKisi(id, nama, icon); };
-  openModal('modal-disclaimer');
+ q('disc-icon').textContent = icon;
+ q('disc-name').textContent = nama;
+ q('btn-disc-ok').onclick = () => { closeModal('modal-disclaimer'); openKisi(id, nama, icon); };
+ openModal('modal-disclaimer');
 }
 
 // ── KISI PAGE ─────────────────────────────────────────────
 async function openKisi(id, nama, icon) {
-  currentMapel = { id, nama, icon };
-  q('kisi-hero').innerHTML = `
-    <div class="kisi-back" onclick="goBack()">← Kembali</div>
-    <div class="kisi-hero-card" style="--hero-grad:linear-gradient(90deg,var(--blue),var(--purple))">
-      <div class="kisi-hero-top">
-        <span class="kisi-big-icon">${icon}</span>
-        <div>
-          <div class="kisi-title">${esc(nama)}</div>
-          <div class="kisi-sub">Kisi-kisi Ulangan · Kelas 8F</div>
-        </div>
-      </div>
-    </div>`;
-  showPage('page-kisi');
-  const tabBar = q('kisi-tab-bar'); if (tabBar) tabBar.style.display = 'flex';
-  switchKisiTab('materi');
-  // Update presence
-  startPresenceTracking('kisi');
+ currentMapel = { id, nama, icon };
+ q('kisi-hero').innerHTML = `
+ <div class="kisi-back" onclick="goBack()">← Kembali</div>
+ <div class="kisi-hero-card" style="--hero-grad:linear-gradient(90deg,var(--blue),var(--purple))">
+ <div class="kisi-hero-top">
+ <span class="kisi-big-icon">${icon}</span>
+ <div>
+ <div class="kisi-title">${esc(nama)}</div>
+ <div class="kisi-sub">Kisi-kisi Ulangan · Kelas 8F</div>
+ </div>
+ </div>
+ </div>`;
+ showPage('page-kisi');
+ const tabBar = q('kisi-tab-bar'); if (tabBar) tabBar.style.display = 'flex';
+ switchKisiTab('materi');
+ // Update presence
+ startPresenceTracking('kisi');
 }
 
 function switchKisiTab(tab) {
-  soalMode = tab;
-  ['materi','questions'].forEach(t => q(`ktab-${t}`)?.classList.toggle('active', t===tab));
-  if (tab === 'materi') loadKisiMateri(currentMapel.id);
-  else loadKisiQuestions(currentMapel.id);
+ soalMode = tab;
+ ['materi','questions'].forEach(t => q(`ktab-${t}`)?.classList.toggle('active', t===tab));
+ if (tab === 'materi') loadKisiMateri(currentMapel.id);
+ else loadKisiQuestions(currentMapel.id);
 }
 
 async function loadKisiMateri(mapelId) {
-  const list = q('kisi-list');
-  list.innerHTML = `<div style="padding:0 20px 24px">${[...Array(3)].map(()=>`<div class="skel" style="height:68px;border-radius:14px;margin-bottom:12px"></div>`).join('')}</div>`;
-  const { data, error } = await getKisiKisiCached(mapelId);
-  if (error) {
-    list.innerHTML = `<div class="empty"><div class="e-icon">⚠️</div><p style="color:var(--red)">Gagal memuat kisi-kisi.</p>
-      <button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="loadKisiMateri('${mapelId}')">🔄 Coba Lagi</button></div>`; return;
-  }
-  if (!data?.length) { list.innerHTML = `<div class="empty"><div class="e-icon">📭</div><p>Belum ada kisi-kisi.</p></div>`; return; }
-  list.innerHTML = `<div style="padding:0 20px 32px">` + data.map((item,i) => `
-    <div class="kisi-item" id="ki-${item.id}" style="animation-delay:${i*.06}s">
-      <div class="kisi-item-hd" onclick="toggleKisi('${item.id}')">
-        <div class="kisi-row">
-          <span class="tag ${item.tipe}">${item.tipe}</span>
-          <span class="kisi-item-title">${esc(item.judul)}</span>
-        </div>
-        <span class="chevron">▼</span>
-      </div>
-      <div class="kisi-body"><div class="kisi-body-inner">${md(item.konten)}</div></div>
-    </div>`).join('') + `</div>`;
-  if (data[0]) setTimeout(() => toggleKisi(data[0].id), 300);
+ const list = q('kisi-list');
+ list.innerHTML = `<div style="padding:0 20px 24px">${[...Array(3)].map(()=>`<div class="skel" style="height:68px;border-radius:14px;margin-bottom:12px"></div>`).join('')}</div>`;
+ const { data, error } = await getKisiKisiCached(mapelId);
+ if (error) {
+ list.innerHTML = `<div class="empty"><div class="e-icon icon-warn"></div><p style="color:var(--red)">Gagal memuat kisi-kisi.</p>
+ <button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="loadKisiMateri('${mapelId}')">Coba Lagi</button></div>`; return;
+ }
+ if (!data?.length) { list.innerHTML = `<div class="empty"><div class="e-icon icon-empty"></div><p>Belum ada kisi-kisi.</p></div>`; return; }
+ list.innerHTML = `<div style="padding:0 20px 32px">` + data.map((item,i) => `
+ <div class="kisi-item" id="ki-${item.id}" style="animation-delay:${i*.06}s">
+ <div class="kisi-item-hd" onclick="toggleKisi('${item.id}')">
+ <div class="kisi-row">
+ <span class="tag ${item.tipe}">${item.tipe}</span>
+ <span class="kisi-item-title">${esc(item.judul)}</span>
+ </div>
+ <span class="chevron">▼</span>
+ </div>
+ <div class="kisi-body"><div class="kisi-body-inner">${md(item.konten)}</div></div>
+ </div>`).join('') + `</div>`;
+ if (data[0]) setTimeout(() => toggleKisi(data[0].id), 300);
 }
 
 async function loadKisiQuestions(mapelId) {
-  const list = q('kisi-list');
-  list.innerHTML = `<div style="padding:0 20px 24px">${[...Array(3)].map(()=>`<div class="skel" style="height:80px;border-radius:14px;margin-bottom:12px"></div>`).join('')}</div>`;
-  const { data, error } = await getQuestions(mapelId);
-  allQuestions = data || [];
-  if (error || !data?.length) {
-    list.innerHTML = `<div class="empty"><div class="e-icon">❓</div><p>Belum ada soal latihan.</p></div>`; return;
-  }
-  quizStart(); // mulai timer
-  list.innerHTML = `<div style="padding:0 20px 32px">` +
-    `<div class="quiz-timer-bar">⏱ Waktu berjalan: <span class="quiz-timer-val" id="quiz-timer-val">0:00</span></div>` +
-    `<div class="soal-header"><span class="soal-count">${data.length} Soal</span>
-     <button class="btn btn-ghost btn-sm" onclick="checkAllAnswers()">Periksa Semua</button></div>` +
-    data.map((q_, i) => renderQuestionCard(q_, i)).join('') + `</div>`;
-  // Start live timer display
-  startQuizTimerDisplay();
+ const list = q('kisi-list');
+ list.innerHTML = `<div style="padding:0 20px 24px">${[...Array(3)].map(()=>`<div class="skel" style="height:80px;border-radius:14px;margin-bottom:12px"></div>`).join('')}</div>`;
+ const { data, error } = await getQuestions(mapelId);
+ allQuestions = data || [];
+ if (error || !data?.length) {
+ list.innerHTML = `<div class="empty"><div class="e-icon icon-question"></div><p>Belum ada soal latihan.</p></div>`; return;
+ }
+ quizStart(); // mulai timer
+ list.innerHTML = `<div style="padding:0 20px 32px">` +
+ `<div class="quiz-timer-bar">⏱ Waktu berjalan: <span class="quiz-timer-val" id="quiz-timer-val">0:00</span></div>` +
+ `<div class="soal-header"><span class="soal-count">${data.length} Soal</span>
+ <button class="btn btn-ghost btn-sm" onclick="checkAllAnswers()">Periksa Semua</button></div>` +
+ data.map((q_, i) => renderQuestionCard(q_, i)).join('') + `</div>`;
+ // Start live timer display
+ startQuizTimerDisplay();
 }
 
 function renderQuestionCard(q_, i) {
-  const typeLabel = { mcq:'Pilihan Ganda', multiple:'Pilihan Kompleks', essay:'Isian' };
-  const typeColor = { mcq:'var(--blue)', multiple:'var(--purple)', essay:'var(--amber)' };
-  let optHtml = '';
-  if (q_.type !== 'essay' && q_.options?.length) {
-    optHtml = `<div class="q-options">${q_.options.map((o,oi) => `
-      <label class="q-opt" id="qopt-${q_.id}-${oi}">
-        <input type="${q_.type==='mcq'?'radio':'checkbox'}" name="q-${q_.id}" value="${o.id}" data-correct="${o.is_correct}" class="q-input" onchange="onAnswerChange('${q_.id}')">
-        <span class="q-opt-text">${esc(o.option_text)}</span>
-      </label>`).join('')}</div>`;
-  } else if (q_.type === 'essay') {
-    optHtml = `<textarea class="q-essay-input" id="essay-${q_.id}" placeholder="Tulis jawaban Anda di sini..." rows="3"></textarea>`;
-  }
-  return `
-    <div class="q-card" id="qcard-${q_.id}" style="animation-delay:${i*.05}s">
-      <div class="q-meta">
-        <span class="q-num">${i+1}</span>
-        <span class="q-type-badge" style="color:${typeColor[q_.type]}">${typeLabel[q_.type]}</span>
-      </div>
-      <div class="q-text">${esc(q_.question_text)}</div>
-      ${optHtml}
-      <div class="q-feedback" id="qfb-${q_.id}" style="display:none"></div>
-    </div>`;
+ const typeLabel = { mcq:'Pilihan Ganda', multiple:'Pilihan Kompleks', essay:'Isian' };
+ const typeColor = { mcq:'var(--blue)', multiple:'var(--purple)', essay:'var(--amber)' };
+ let optHtml = '';
+ if (q_.type !== 'essay' && q_.options?.length) {
+ optHtml = `<div class="q-options">${q_.options.map((o,oi) => `
+ <label class="q-opt" id="qopt-${q_.id}-${oi}">
+ <input type="${q_.type==='mcq'?'radio':'checkbox'}" name="q-${q_.id}" value="${o.id}" data-correct="${o.is_correct}" class="q-input" onchange="onAnswerChange('${q_.id}')">
+ <span class="q-opt-text">${esc(o.option_text)}</span>
+ </label>`).join('')}</div>`;
+ } else if (q_.type === 'essay') {
+ optHtml = `<textarea class="q-essay-input" id="essay-${q_.id}" placeholder="Tulis jawaban Anda di sini..." rows="3"></textarea>`;
+ }
+ return `
+ <div class="q-card" id="qcard-${q_.id}" style="animation-delay:${i*.05}s">
+ <div class="q-meta">
+ <span class="q-num">${i+1}</span>
+ <span class="q-type-badge" style="color:${typeColor[q_.type]}">${typeLabel[q_.type]}</span>
+ </div>
+ <div class="q-text">${esc(q_.question_text)}</div>
+ ${optHtml}
+ <div class="q-feedback" id="qfb-${q_.id}" style="display:none"></div>
+ </div>`;
 }
 
 function onAnswerChange(qId) { q(`qcard-${qId}`)?.classList.add('answered'); }
 
 function checkAllAnswers() {
-  let correct = 0, total = 0;
-  allQuestions.forEach(qu => {
-    if (qu.type === 'essay') return;
-    total++;
-    const inputs   = document.querySelectorAll(`input[name="q-${qu.id}"]`);
-    const selected = [...inputs].filter(i => i.checked);
-    const fb       = q(`qfb-${qu.id}`);
-    const card     = q(`qcard-${qu.id}`);
-    if (!selected.length) {
-      if (fb) { fb.style.display='block'; fb.className='q-feedback q-skip'; fb.textContent='⚪ Belum dijawab'; } return;
-    }
-    const correctIds  = qu.options.filter(o=>o.is_correct).map(o=>o.id);
-    const selectedIds = selected.map(i=>i.value);
-    const ok = correctIds.length === selectedIds.length && correctIds.every(id=>selectedIds.includes(id));
-    if (ok) { correct++; card?.classList.add('q-correct'); } else { card?.classList.add('q-wrong'); }
-    inputs.forEach((inp,oi) => {
-      const lbl = q(`qopt-${qu.id}-${oi}`);
-      if (lbl) {
-        if (inp.dataset.correct === 'true') lbl.classList.add('opt-correct');
-        else if (inp.checked) lbl.classList.add('opt-wrong');
-      }
-    });
-    let expHtml = ok ? '✅ Benar!' : '❌ Salah.';
-    if (!ok && qu.explanation) expHtml += ` <span class="q-exp">${esc(qu.explanation)}</span>`;
-    if (fb) { fb.style.display='block'; fb.className=`q-feedback ${ok?'q-fb-correct':'q-fb-wrong'}`; fb.innerHTML=expHtml; }
-  });
-  const pct = total > 0 ? Math.round((correct/total)*100) : 0;
-  const scoreText = `Skor: ${correct}/${total} (${pct}%)`;
+ let correct = 0, total = 0;
+ allQuestions.forEach(qu => {
+ if (qu.type === 'essay') return;
+ total++;
+ const inputs = document.querySelectorAll(`input[name="q-${qu.id}"]`);
+ const selected = [...inputs].filter(i => i.checked);
+ const fb = q(`qfb-${qu.id}`);
+ const card = q(`qcard-${qu.id}`);
+ if (!selected.length) {
+ if (fb) { fb.style.display='block'; fb.className='q-feedback q-skip'; fb.textContent='Belum dijawab'; } return;
+ }
+ const correctIds = qu.options.filter(o=>o.is_correct).map(o=>o.id);
+ const selectedIds = selected.map(i=>i.value);
+ const ok = correctIds.length === selectedIds.length && correctIds.every(id=>selectedIds.includes(id));
+ if (ok) { correct++; card?.classList.add('q-correct'); } else { card?.classList.add('q-wrong'); }
+ inputs.forEach((inp,oi) => {
+ const lbl = q(`qopt-${qu.id}-${oi}`);
+ if (lbl) {
+ if (inp.dataset.correct === 'true') lbl.classList.add('opt-correct');
+ else if (inp.checked) lbl.classList.add('opt-wrong');
+ }
+ });
+ let expHtml = ok ? 'Benar' : 'Salah';
+ if (!ok && qu.explanation) expHtml += ` <span class="q-exp">${esc(qu.explanation)}</span>`;
+ if (fb) { fb.style.display='block'; fb.className=`q-feedback ${ok?'q-fb-correct':'q-fb-wrong'}`; fb.innerHTML=expHtml; }
+ });
+ const pct = total > 0 ? Math.round((correct/total)*100) : 0;
+ const scoreText = `Skor: ${correct}/${total} (${pct}%)`;
 
-  showToast(
-    pct >= 80 ? '🎉 Bagus!' : pct >= 60 ? '👍 Lumayan!' : '💪 Terus Belajar!',
-    scoreText,
-    pct >= 80 ? 'success' : pct >= 60 ? 'info' : 'warning'
-  );
+ showToast(
+ pct >= 80 ? 'Bagus!' : pct >= 60 ? 'Lumayan!' : 'Terus Belajar!',
+ scoreText,
+ pct >= 80 ? 'success' : pct >= 60 ? 'info' : 'warning'
+ );
 
-  // Hitung waktu pengerjaan
-  const timeMs = _quizTimeStart ? (Date.now() - _quizTimeStart) : 0;
-  stopQuizTimerDisplay();
+ // Hitung waktu pengerjaan
+ const timeMs = _quizTimeStart ? (Date.now() - _quizTimeStart) : 0;
+ stopQuizTimerDisplay();
 
-  // Simpan ke leaderboard
-  if (currentMapel && currentProfile && total > 0) {
-    saveQuizResult(currentMapel.id, currentProfile.nama_lengkap, correct, total, timeMs)
-      .catch(()=>{});
-  }
+ // Simpan ke leaderboard
+ if (currentMapel && currentProfile && total > 0) {
+ saveQuizResult(currentMapel.id, currentProfile.nama_lengkap, correct, total, timeMs)
+ .catch(()=>{});
+ }
 
-  // Tampilkan rating popup (hanya sekali seumur hidup)
-  setTimeout(() => maybeShowRating(scoreText), 1200);
+ // Tampilkan rating popup (hanya sekali seumur hidup)
+ setTimeout(() => maybeShowRating(scoreText), 1200);
 }
 
 function toggleKisi(id) { q(`ki-${id}`)?.classList.toggle('open'); }
-function goBack()        {
-  stopQuizTimerDisplay();
-  startPresenceTracking('dashboard');
-  showPage('page-dashboard');
+function goBack() {
+ stopQuizTimerDisplay();
+ startPresenceTracking('dashboard');
+ showPage('page-dashboard');
 }
 
 // ── QUIZ TIMER DISPLAY ────────────────────────────────────
 let _timerDisplayInterval = null;
 function startQuizTimerDisplay() {
-  clearInterval(_timerDisplayInterval);
-  _timerDisplayInterval = setInterval(() => {
-    const el = q('quiz-timer-val'); if (!el || !_quizTimeStart) return;
-    const elapsed = Date.now() - _quizTimeStart;
-    const m = Math.floor(elapsed / 60000);
-    const s = Math.floor((elapsed % 60000) / 1000);
-    el.textContent = `${m}:${s.toString().padStart(2,'0')}`;
-  }, 1000);
+ clearInterval(_timerDisplayInterval);
+ _timerDisplayInterval = setInterval(() => {
+ const el = q('quiz-timer-val'); if (!el || !_quizTimeStart) return;
+ const elapsed = Date.now() - _quizTimeStart;
+ const m = Math.floor(elapsed / 60000);
+ const s = Math.floor((elapsed % 60000) / 1000);
+ el.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+ }, 1000);
 }
 function stopQuizTimerDisplay() { clearInterval(_timerDisplayInterval); }
 
 // ════════════════════════════════════════════════════════════
-//  BROADCAST POP-UP
+// BROADCAST POP-UP
 // ════════════════════════════════════════════════════════════
 
-const BCAST_KEY   = 'kisi8f_read_bcast';
-const getRead     = () => { try { return JSON.parse(localStorage.getItem(BCAST_KEY)||'[]'); } catch{return[];} };
-const markRead    = id => { const r=getRead(); if(!r.includes(id)) localStorage.setItem(BCAST_KEY,JSON.stringify([...r,id].slice(-50))); };
+const BCAST_KEY = 'kisi8f_read_bcast';
+const getRead = () => { try { return JSON.parse(localStorage.getItem(BCAST_KEY)||'[]'); } catch{return[];} };
+const markRead = id => { const r=getRead(); if(!r.includes(id)) localStorage.setItem(BCAST_KEY,JSON.stringify([...r,id].slice(-50))); };
 
 function showBroadcastModal(b) {
-  if (!b?.id || getRead().includes(b.id)) return;
-  document.getElementById('bcast-overlay')?.remove();
-  const el = document.createElement('div');
-  el.id = 'bcast-overlay'; el.className = 'modal-bg open';
-  const imgHtml = b.image_url
-    ? `<div class="bcast-img-wrap"><img src="${b.image_url}" alt="Gambar" class="bcast-img" onclick="this.classList.toggle('bcast-img-zoom')"></div>`
-    : '';
-  el.innerHTML = `
-    <div class="modal bcast-modal">
-      <div class="bcast-stripe"></div>
-      <div class="bcast-head">
-        <span class="bcast-icon">📢</span>
-        <div>
-          <div class="bcast-title">${esc(b.title||'Pengumuman')}</div>
-          <div class="bcast-time">${fmtDate(b.created_at)}</div>
-        </div>
-        <button class="modal-close" style="position:static;margin-left:auto" onclick="closeBcast('${b.id}')">✕</button>
-      </div>
-      ${imgHtml}
-      <div class="bcast-body">${esc(b.message)}</div>
-      <button class="btn btn-primary w-full" onclick="closeBcast('${b.id}')">✓ Mengerti</button>
-    </div>`;
-  document.body.appendChild(el);
-  document.body.style.overflow = 'hidden';
+ if (!b?.id || getRead().includes(b.id)) return;
+ document.getElementById('bcast-overlay')?.remove();
+ const el = document.createElement('div');
+ el.id = 'bcast-overlay'; el.className = 'modal-bg open';
+ const imgHtml = b.image_url
+ ? `<div class="bcast-img-wrap"><img src="${b.image_url}" alt="Gambar" class="bcast-img" onclick="this.classList.toggle('bcast-img-zoom')"></div>`
+ : '';
+ el.innerHTML = `
+ <div class="modal bcast-modal">
+ <div class="bcast-stripe"></div>
+ <div class="bcast-head">
+ <span class="bcast-icon"></span>
+ <div>
+ <div class="bcast-title">${esc(b.title||'Pengumuman')}</div>
+ <div class="bcast-time">${fmtDate(b.created_at)}</div>
+ </div>
+ <button class="modal-close" style="position:static;margin-left:auto" onclick="closeBcast('${b.id}')">&times;</button>
+ </div>
+ ${imgHtml}
+ <div class="bcast-body">${esc(b.message)}</div>
+ <button class="btn btn-primary w-full" onclick="closeBcast('${b.id}')">Mengerti</button>
+ </div>`;
+ document.body.appendChild(el);
+ document.body.style.overflow = 'hidden';
 }
 
 function closeBcast(id) {
-  markRead(id);
-  const el = document.getElementById('bcast-overlay');
-  if (el) { el.classList.remove('open'); setTimeout(()=>{ el.remove(); document.body.style.overflow=''; },280); }
+ markRead(id);
+ const el = document.getElementById('bcast-overlay');
+ if (el) { el.classList.remove('open'); setTimeout(()=>{ el.remove(); document.body.style.overflow=''; },280); }
 }
 
 // ════════════════════════════════════════════════════════════
-//  ADMIN
+// ADMIN
 // ════════════════════════════════════════════════════════════
 
 function initAdmin() {
-  const p = currentProfile;
-  if (p) {
-    q('admin-name').textContent   = p.nama_lengkap;
-    q('admin-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase();
-  }
-  loadAdminStats(); loadUsers(); adminSection('users');
-  rtProfiles(() => { loadAdminStats(); loadUsers(); showToast('Update', 'Data pengguna berubah.', 'info'); });
-  rtRatings(() => {
-    if (q('admin-ratings')?.style.display !== 'none') loadAdminRatings();
-    if (q('page-rating')?.classList.contains('active')) loadPublicRatings();
-  });
-  rtBroadcast(b => showBroadcastModal(b));
+ const p = currentProfile;
+ if (p) {
+ q('admin-name').textContent = p.nama_lengkap;
+ q('admin-avatar').textContent = p.nama_lengkap.charAt(0).toUpperCase();
+ }
+ loadAdminStats(); loadUsers(); adminSection('users');
+
+ // Satu set listener via RT bus
+ rtOn('profiles', () => { loadAdminStats(); loadUsers(); showToast('Update', 'Data pengguna berubah.', 'info'); });
+ rtOn('ratings', () => {
+   if (q('admin-ratings') && q('admin-ratings').style.display !== 'none') loadAdminRatings();
+   if (q('page-rating')?.classList.contains('active')) loadPublicRatings(true);
+ });
+ rtOn('broadcasts', payload => {
+ if (payload.eventType === 'INSERT' && payload.new) showBroadcastModal(payload.new);
+ });
+ startBroadcastPolling(b => showBroadcastModal(b));
 }
 
 function adminSection(sec) {
-  ['users','mapel','soal','broadcast','online','ratings','stats'].forEach(s => {
-    q(`snav-${s}`)?.classList.toggle('active', s===sec);
-    q(`nav-${s}`)?.classList.toggle('active', s===sec);
-    const el = q(`admin-${s}`); if (el) el.style.display = s===sec ? 'block' : 'none';
-  });
-  if (sec==='users')     { loadUsers(); loadAdminStats(); }
-  if (sec==='mapel')     loadAdminMapel();
-  if (sec==='soal')      loadAdminSoalPage();
-  if (sec==='broadcast') loadBroadcastPage();
-  if (sec==='online')    loadOnlineUsers();
-  if (sec==='ratings')   loadAdminRatings();
-  if (sec==='stats')     loadAdminStats();
+ ['users','mapel','soal','broadcast','online','ratings','stats'].forEach(s => {
+ q(`snav-${s}`)?.classList.toggle('active', s===sec);
+ q(`nav-${s}`)?.classList.toggle('active', s===sec);
+ const el = q(`admin-${s}`); if (el) el.style.display = s===sec ? 'block' : 'none';
+ });
+ if (sec==='users') { loadUsers(); loadAdminStats(); }
+ if (sec==='mapel') loadAdminMapel();
+ if (sec==='soal') loadAdminSoalPage();
+ if (sec==='broadcast') loadBroadcastPage();
+ if (sec==='online') loadOnlineUsers();
+ if (sec==='ratings') loadAdminRatings();
+ if (sec==='stats') loadAdminStats();
 }
 
 // ── USERS ─────────────────────────────────────────────────
 async function loadAdminStats() {
-  const { data } = await getAllUsers(); if (!data) return;
-  allUsers = data;
-  const c = data.reduce((a,u)=>{ a[u.status]=(a[u.status]||0)+1; return a; },{});
-  const s = (id,v) => { const e=q(id); if(e) e.textContent=v; };
-  s('a-total',data.length); s('a-pending',c.pending||0); s('a-approved',c.approved||0); s('a-rejected',c.rejected||0);
-  s('stat-today', data.filter(u=>new Date(u.created_at).toDateString()===new Date().toDateString()).length);
+ const { data } = await getAllUsers(); if (!data) return;
+ allUsers = data;
+ const c = data.reduce((a,u)=>{ a[u.status]=(a[u.status]||0)+1; return a; },{});
+ const s = (id,v) => { const e=q(id); if(e) e.textContent=v; };
+ s('a-total',data.length); s('a-pending',c.pending||0); s('a-approved',c.approved||0); s('a-rejected',c.rejected||0);
+ s('stat-today', data.filter(u=>new Date(u.created_at).toDateString()===new Date().toDateString()).length);
 }
 
 async function loadUsers() {
-  const tbody = q('users-tbody'); if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="6" class="td-empty"><div class="skel" style="height:14px;width:50%;margin:0 auto"></div></td></tr>`;
-  const { data, error } = await getAllUsers();
-  if (error) {
-    tbody.innerHTML = `<tr><td colspan="6" class="td-empty" style="color:var(--red)">
-      Gagal memuat. <button class="btn btn-ghost btn-sm" onclick="loadUsers()">Coba Lagi</button></td></tr>`; return;
-  }
-  allUsers = data || []; renderUsersTable(allUsers);
+ const tbody = q('users-tbody'); if (!tbody) return;
+ tbody.innerHTML = `<tr><td colspan="6" class="td-empty"><div class="skel" style="height:14px;width:50%;margin:0 auto"></div></td></tr>`;
+ const { data, error } = await getAllUsers();
+ if (error) {
+ tbody.innerHTML = `<tr><td colspan="6" class="td-empty" style="color:var(--red)">
+ Gagal memuat. <button class="btn btn-ghost btn-sm" onclick="loadUsers()">Coba Lagi</button></td></tr>`; return;
+ }
+ allUsers = data || []; renderUsersTable(allUsers);
 }
 
 function renderUsersTable(data) {
-  const tbody = q('users-tbody'); if (!tbody) return;
-  if (!data.length) { tbody.innerHTML = `<tr><td colspan="6" class="td-empty">Belum ada pengguna.</td></tr>`; return; }
-  tbody.innerHTML = data.map(u => {
-    const isAdmin = u.role === 'admin';
-    let actions;
-    if (isAdmin) {
-      actions = `<span style="color:var(--dim)">—</span>`;
-    } else if (u.status === 'rejected') {
-      actions = `<div class="acts">
-        <button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">Setujui</button>
-        <button class="btn btn-ghost btn-sm" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">Pending</button>
-      </div>`;
-    } else {
-      actions = `<div class="acts">
-        ${u.status !== 'approved' ? `<button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">Setujui</button>` : ''}
-        ${u.status !== 'pending'  ? `<button class="btn btn-ghost btn-sm" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">Pending</button>` : ''}
-        ${u.status === 'approved' ? `<button class="btn btn-danger btn-sm" onclick="setStatus('${u.id}','revoke','${esc(u.nama_lengkap)}')">Cabut</button>` : ''}
-        ${u.status === 'pending'  ? `<button class="btn btn-danger btn-sm" onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">Tolak</button>` : ''}
-      </div>`;
-    }
-    const rejReason = u.rejection_reason
-      ? `<div style="font-size:10px;color:var(--red);margin-top:2px">${esc(u.rejection_reason.substring(0,40))}${u.rejection_reason.length>40?'...':''}</div>` : '';
-    return `<tr>
-      <td><div class="u-cell">
-        <div class="avatar" style="width:32px;height:32px;font-size:11px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
-        <div><div class="u-name">${esc(u.nama_lengkap)}</div><div class="u-email">${esc(u.email)}</div></div>
-      </div></td>
-      <td>${esc(u.kelas || '—')}</td>
-      <td><span class="badge ${isAdmin ? 'b-admin' : 'b-siswa'}">${u.role}</span></td>
-      <td><span class="badge b-${u.status}">${u.status}</span>${rejReason}</td>
-      <td class="td-date hide-sm">${fmtDate(u.created_at)}</td>
-      <td>${actions}</td>
-    </tr>`;
-  }).join('');
+ const tbody = q('users-tbody'); if (!tbody) return;
+ if (!data.length) { tbody.innerHTML = `<tr><td colspan="6" class="td-empty">Belum ada pengguna.</td></tr>`; return; }
+ tbody.innerHTML = data.map(u => {
+ const isAdmin = u.role === 'admin';
+ let actions;
+ if (isAdmin) {
+ actions = `<span style="color:var(--dim)">—</span>`;
+ } else if (u.status === 'rejected') {
+ actions = `<div class="acts">
+ <button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">Setujui</button>
+ <button class="btn btn-ghost btn-sm" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">Pending</button>
+ </div>`;
+ } else {
+ actions = `<div class="acts">
+ ${u.status !== 'approved' ? `<button class="btn btn-success btn-sm" onclick="setStatus('${u.id}','approved','${esc(u.nama_lengkap)}')">Setujui</button>` : ''}
+ ${u.status !== 'pending' ? `<button class="btn btn-ghost btn-sm" onclick="setStatus('${u.id}','pending','${esc(u.nama_lengkap)}')">Pending</button>` : ''}
+ ${u.status === 'approved' ? `<button class="btn btn-danger btn-sm" onclick="setStatus('${u.id}','revoke','${esc(u.nama_lengkap)}')">Cabut</button>` : ''}
+ ${u.status === 'pending' ? `<button class="btn btn-danger btn-sm" onclick="setStatus('${u.id}','rejected','${esc(u.nama_lengkap)}')">Tolak</button>` : ''}
+ </div>`;
+ }
+ const rejReason = u.rejection_reason
+ ? `<div style="font-size:10px;color:var(--red);margin-top:2px">${esc(u.rejection_reason.substring(0,40))}${u.rejection_reason.length>40?'...':''}</div>` : '';
+ return `<tr>
+ <td><div class="u-cell">
+ <div class="avatar" style="width:32px;height:32px;font-size:11px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
+ <div><div class="u-name">${esc(u.nama_lengkap)}</div><div class="u-email">${esc(u.email)}</div></div>
+ </div></td>
+ <td>${esc(u.kelas || '—')}</td>
+ <td><span class="badge ${isAdmin ? 'b-admin' : 'b-siswa'}">${u.role}</span></td>
+ <td><span class="badge b-${u.status}">${u.status}</span>${rejReason}</td>
+ <td class="td-date hide-sm">${fmtDate(u.created_at)}</td>
+ <td>${actions}</td>
+ </tr>`;
+ }).join('');
 }
 
 // ── State untuk reject modal ──────────────────────────────
 let _rejectTargetId = null, _rejectTargetNama = null, _rejectAction = null;
 
 function openRejectModal(id, nama, action) {
-  _rejectTargetId   = id;
-  _rejectTargetNama = nama;
-  _rejectAction     = action; // 'rejected' | 'revoke'
-  q('reject-modal-title').textContent  = action === 'revoke' ? 'Cabut Akses' : 'Tolak Akun';
-  q('reject-modal-desc').textContent   = action === 'revoke'
-    ? `Cabut akses "${nama}"? User tidak dapat login lagi. Alasan akan dikirim ke email.`
-    : `Tolak pendaftaran "${nama}"? Alasan akan dikirim ke email user.`;
-  q('reject-reason-input').value = '';
-  openModal('modal-reject-reason');
+ _rejectTargetId = id;
+ _rejectTargetNama = nama;
+ _rejectAction = action; // 'rejected' | 'revoke'
+ q('reject-modal-title').textContent = action === 'revoke' ? 'Cabut Akses' : 'Tolak Akun';
+ q('reject-modal-desc').textContent = action === 'revoke'
+ ? `Cabut akses "${nama}"? User tidak dapat login lagi. Alasan akan dikirim ke email.`
+ : `Tolak pendaftaran "${nama}"? Alasan akan dikirim ke email user.`;
+ q('reject-reason-input').value = '';
+ openModal('modal-reject-reason');
 }
 
 async function confirmRejectAction() {
-  const reason = q('reject-reason-input')?.value.trim() || '';
-  if (!_rejectTargetId || !_rejectAction) return;
+ const reason = q('reject-reason-input')?.value.trim() || '';
+ if (!_rejectTargetId || !_rejectAction) return;
 
-  const btn = q('btn-confirm-reject');
-  setLoading(btn, true);
+ const btn = q('btn-confirm-reject');
+ setLoading(btn, true);
 
-  if (_rejectAction === 'rejected') {
-    // Tolak: set status rejected + simpan alasan
-    const res = await updateUserStatus(_rejectTargetId, 'rejected', reason || null);
-    setLoading(btn, false);
-    closeModal('modal-reject-reason');
-    if (res.success) {
-      // Kirim email penolakan
-      const user = allUsers.find(u => u.id === _rejectTargetId);
-      if (user) _sendStatusEmail(EMAILJS_TEMPLATE_REJECT, user.email, user.nama_lengkap, reason);
-      showToast('Berhasil', `Akun ${_rejectTargetNama} ditolak.`, 'warning');
-      loadUsers(); loadAdminStats();
-    } else { showToast('Error', res.error, 'error'); }
-  } else if (_rejectAction === 'revoke') {
-    // Cabut akses: set rejected + simpan alasan
-    const res = await updateUserStatus(_rejectTargetId, 'rejected', reason || null);
-    setLoading(btn, false);
-    closeModal('modal-reject-reason');
-    if (res.success) {
-      const user = allUsers.find(u => u.id === _rejectTargetId);
-      if (user) _sendStatusEmail(EMAILJS_TEMPLATE_REVOKE, user.email, user.nama_lengkap, reason);
-      showToast('Berhasil', `Akses ${_rejectTargetNama} dicabut.`, 'warning');
-      loadUsers(); loadAdminStats();
-    } else { showToast('Error', res.error, 'error'); }
-  }
+ if (_rejectAction === 'rejected') {
+ // Tolak: set status rejected + simpan alasan
+ const res = await updateUserStatus(_rejectTargetId, 'rejected', reason || null);
+ setLoading(btn, false);
+ closeModal('modal-reject-reason');
+ if (res.success) {
+ // Kirim email penolakan
+ const user = allUsers.find(u => u.id === _rejectTargetId);
+ if (user) _sendStatusEmail(EMAILJS_TEMPLATE_REJECT, user.email, user.nama_lengkap, reason);
+ showToast('Berhasil', `Akun ${_rejectTargetNama} ditolak.`, 'warning');
+ loadUsers(); loadAdminStats();
+ } else { showToast('Error', res.error, 'error'); }
+ } else if (_rejectAction === 'revoke') {
+ // Cabut akses: set rejected + simpan alasan
+ const res = await updateUserStatus(_rejectTargetId, 'rejected', reason || null);
+ setLoading(btn, false);
+ closeModal('modal-reject-reason');
+ if (res.success) {
+ const user = allUsers.find(u => u.id === _rejectTargetId);
+ if (user) _sendStatusEmail(EMAILJS_TEMPLATE_REVOKE, user.email, user.nama_lengkap, reason);
+ showToast('Berhasil', `Akses ${_rejectTargetNama} dicabut.`, 'warning');
+ loadUsers(); loadAdminStats();
+ } else { showToast('Error', res.error, 'error'); }
+ }
 }
 
 async function setStatus(id, status, nama) {
-  if (status === 'rejected') {
-    openRejectModal(id, nama, 'rejected');
-    return;
-  }
-  if (status === 'revoke') {
-    openRejectModal(id, nama, 'revoke');
-    return;
-  }
-  const res = await updateUserStatus(id, status);
-  const labels = { approved: 'Disetujui', pending: 'Ke Pending' };
-  const types  = { approved: 'success', pending: 'info' };
-  if (res.success) {
-    showToast('Berhasil', `${nama} — ${labels[status]}`, types[status]);
-    loadUsers(); loadAdminStats();
-  } else showToast('Error', res.error, 'error');
+ if (status === 'rejected') {
+ openRejectModal(id, nama, 'rejected');
+ return;
+ }
+ if (status === 'revoke') {
+ openRejectModal(id, nama, 'revoke');
+ return;
+ }
+ const res = await updateUserStatus(id, status);
+ const labels = { approved: 'Disetujui', pending: 'Ke Pending' };
+ const types = { approved: 'success', pending: 'info' };
+ if (res.success) {
+ showToast('Berhasil', `${nama} — ${labels[status]}`, types[status]);
+ loadUsers(); loadAdminStats();
+ } else showToast('Error', res.error, 'error');
 }
 
 function searchUsers(val) {
-  renderUsersTable(allUsers.filter(u =>
-    (u.nama_lengkap+u.email+u.status+u.role).toLowerCase().includes(val.toLowerCase())
-  ));
+ renderUsersTable(allUsers.filter(u =>
+ (u.nama_lengkap+u.email+u.status+u.role).toLowerCase().includes(val.toLowerCase())
+ ));
 }
 
 // ── MAPEL ─────────────────────────────────────────────────
 async function loadAdminMapel() {
-  const grid = q('admin-mapel-grid'); if (!grid) return;
-  grid.innerHTML = `<div class="skel" style="height:90px;border-radius:12px"></div>`.repeat(4);
-  const { data } = await getMapel(); if (!data) return;
-  grid.innerHTML = !data.length
-    ? `<div class="empty-full" style="grid-column:1/-1"><div class="e-icon">📭</div><p>Belum ada mapel.</p></div>`
-    : data.map(m => {
-        const hasSchedule = !!m.waktu_buka;
-        const schedLabel  = hasSchedule
-          ? `⏰ Jadwal: ${new Date(m.waktu_buka).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}${m.waktu_tutup?' – '+new Date(m.waktu_tutup).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}`
-          : '';
-        return `
-        <div class="mapel-mgr-card">
-          <div class="mapel-mgr-top">
-            <div class="mapel-mgr-info">
-              <span class="mapel-mgr-icon">${m.icon}</span>
-              <div>
-                <div class="mapel-mgr-name">${esc(m.nama)}</div>
-                <div class="mapel-mgr-status">Status: <span style="color:${m.is_locked?'var(--red)':'var(--green)'}">
-                  ${m.is_locked?'🔒 Terkunci':'✅ Tersedia'}</span></div>
-                ${schedLabel ? `<div style="font-size:11px;color:var(--amber);margin-top:2px">${schedLabel}</div>` : ''}
-              </div>
-            </div>
-            <label class="toggle" title="${hasSchedule?'Ada jadwal otomatis':'Toggle manual'}">
-              <input type="checkbox" ${!m.is_locked?'checked':''} onchange="toggleMapel('${m.id}',this.checked)" ${hasSchedule?'style="opacity:.5"':''}>
-              <span class="toggle-track"></span>
-            </label>
-          </div>
-          <div class="mapel-mgr-actions">
-            <button class="btn btn-ghost btn-sm" onclick="openEditMapel(${JSON.stringify(m).replace(/"/g,'&quot;')})">✏️ Edit</button>
-            <button class="btn btn-ghost btn-sm" onclick="openSoalForMapel('${m.id}')">📝 Soal</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteMapelConfirm('${m.id}','${esc(m.nama)}')">🗑️</button>
-          </div>
-        </div>`;
-      }).join('');
+ const grid = q('admin-mapel-grid'); if (!grid) return;
+ grid.innerHTML = `<div class="skel" style="height:90px;border-radius:12px"></div>`.repeat(4);
+ const { data } = await getMapel(); if (!data) return;
+ grid.innerHTML = !data.length
+ ? `<div class="empty-full" style="grid-column:1/-1"><div class="e-icon icon-empty"></div><p>Belum ada mapel.</p></div>`
+ : data.map(m => {
+ const hasSchedule = !!m.waktu_buka;
+ const schedLabel = hasSchedule
+ ? `⏰ Jadwal: ${new Date(m.waktu_buka).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}${m.waktu_tutup?' – '+new Date(m.waktu_tutup).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):''}`
+ : '';
+ return `
+ <div class="mapel-mgr-card">
+ <div class="mapel-mgr-top">
+ <div class="mapel-mgr-info">
+ <span class="mapel-mgr-icon">${m.icon}</span>
+ <div>
+ <div class="mapel-mgr-name">${esc(m.nama)}</div>
+ <div class="mapel-mgr-status">Status: <span style="color:${m.is_locked?'var(--red)':'var(--green)'}">
+ ${m.is_locked?' Terkunci':' Tersedia'}</span></div>
+ ${schedLabel ? `<div style="font-size:11px;color:var(--amber);margin-top:2px">${schedLabel}</div>` : ''}
+ </div>
+ </div>
+ <label class="toggle" title="${hasSchedule?'Ada jadwal otomatis':'Toggle manual'}">
+ <input type="checkbox" ${!m.is_locked?'checked':''} onchange="toggleMapel('${m.id}',this.checked)" ${hasSchedule?'style="opacity:.5"':''}>
+ <span class="toggle-track"></span>
+ </label>
+ </div>
+ <div class="mapel-mgr-actions">
+ <button class="btn btn-ghost btn-sm" onclick="openEditMapel(${JSON.stringify(m).replace(/"/g,'&quot;')})">Edit</button>
+ <button class="btn btn-ghost btn-sm" onclick="openSoalForMapel('${m.id}')"> Soal</button>
+ <button class="btn btn-danger btn-sm" onclick="deleteMapelConfirm('${m.id}','${esc(m.nama)}')"></button>
+ </div>
+ </div>`;
+ }).join('');
 }
 
 async function toggleMapel(id, enabled) {
-  const res = await toggleMapelLock(id, !enabled);
-  if (res.success) { showToast('Berhasil',`Mapel ${enabled?'dibuka':'dikunci'}.`,'success'); loadAdminMapel(); }
-  else showToast('Error',res.error,'error');
+ const res = await toggleMapelLock(id, !enabled);
+ if (res.success) { showToast('Berhasil',`Mapel ${enabled?'dibuka':'dikunci'}.`,'success'); loadAdminMapel(); }
+ else showToast('Error',res.error,'error');
 }
 
 function openAddMapel() {
-  editingMapelId=null;
-  q('mapel-modal-title').textContent='Tambah Mata Pelajaran';
-  q('mapel-form-nama').value=''; q('mapel-form-icon').value='📚';
-  q('mapel-form-from').value='#4f8ef7'; q('mapel-form-to').value='#9b7ef8';
-  q('mapel-form-urutan').value='0';
-  q('mapel-form-waktu-buka').value=''; q('mapel-form-waktu-tutup').value='';
-  openModal('modal-mapel');
+ editingMapelId=null;
+ q('mapel-modal-title').textContent='Tambah Mata Pelajaran';
+ q('mapel-form-nama').value=''; q('mapel-form-icon').value='';
+ q('mapel-form-from').value='#4f8ef7'; q('mapel-form-to').value='#9b7ef8';
+ q('mapel-form-urutan').value='0';
+ q('mapel-form-waktu-buka').value=''; q('mapel-form-waktu-tutup').value='';
+ openModal('modal-mapel');
 }
 
 // openEditMapel sekarang menerima objek mapel lengkap
 function openEditMapel(m) {
-  if (typeof m === 'string') { showToast('Error','Data mapel tidak valid.','error'); return; }
-  editingMapelId = m.id;
-  q('mapel-modal-title').textContent='Edit Mata Pelajaran';
-  q('mapel-form-nama').value   = m.nama;
-  q('mapel-form-icon').value   = m.icon;
-  q('mapel-form-from').value   = m.color_from;
-  q('mapel-form-to').value     = m.color_to;
-  q('mapel-form-urutan').value = m.urutan;
-  // Format datetime-local: 2025-06-01T08:00
-  const toLocal = iso => iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16) : '';
-  q('mapel-form-waktu-buka').value  = toLocal(m.waktu_buka);
-  q('mapel-form-waktu-tutup').value = toLocal(m.waktu_tutup);
-  openModal('modal-mapel');
+ if (typeof m === 'string') { showToast('Error','Data mapel tidak valid.','error'); return; }
+ editingMapelId = m.id;
+ q('mapel-modal-title').textContent='Edit Mata Pelajaran';
+ q('mapel-form-nama').value = m.nama;
+ q('mapel-form-icon').value = m.icon;
+ q('mapel-form-from').value = m.color_from;
+ q('mapel-form-to').value = m.color_to;
+ q('mapel-form-urutan').value = m.urutan;
+ // Format datetime-local: 2025-06-01T08:00
+ const toLocal = iso => iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16) : '';
+ q('mapel-form-waktu-buka').value = toLocal(m.waktu_buka);
+ q('mapel-form-waktu-tutup').value = toLocal(m.waktu_tutup);
+ openModal('modal-mapel');
 }
 
 async function saveMapel() {
-  const nama   = q('mapel-form-nama').value.trim();
-  const icon   = q('mapel-form-icon').value.trim() || '📚';
-  const from_  = q('mapel-form-from').value;
-  const to_    = q('mapel-form-to').value;
-  const urutan = parseInt(q('mapel-form-urutan').value) || 0;
-  const wbVal  = q('mapel-form-waktu-buka').value;
-  const wtVal  = q('mapel-form-waktu-tutup').value;
-  const waktu_buka  = wbVal  ? new Date(wbVal).toISOString()  : null;
-  const waktu_tutup = wtVal  ? new Date(wtVal).toISOString()  : null;
+ const nama = q('mapel-form-nama').value.trim();
+ const icon = q('mapel-form-icon').value.trim() || '';
+ const from_ = q('mapel-form-from').value;
+ const to_ = q('mapel-form-to').value;
+ const urutan = parseInt(q('mapel-form-urutan').value) || 0;
+ const wbVal = q('mapel-form-waktu-buka').value;
+ const wtVal = q('mapel-form-waktu-tutup').value;
+ const waktu_buka = wbVal ? new Date(wbVal).toISOString() : null;
+ const waktu_tutup = wtVal ? new Date(wtVal).toISOString() : null;
 
-  if (!nama) { showToast('Error','Nama mapel wajib diisi.','error'); return; }
-  if (waktu_buka && waktu_tutup && new Date(waktu_tutup) <= new Date(waktu_buka)) {
-    showToast('Error','Waktu tutup harus setelah waktu buka.','error'); return;
-  }
+ if (!nama) { showToast('Error','Nama mapel wajib diisi.','error'); return; }
+ if (waktu_buka && waktu_tutup && new Date(waktu_tutup) <= new Date(waktu_buka)) {
+ showToast('Error','Waktu tutup harus setelah waktu buka.','error'); return;
+ }
 
-  const btn = q('btn-save-mapel'); setLoading(btn,true);
-  const payload = { nama, icon, color_from:from_, color_to:to_, urutan, waktu_buka, waktu_tutup };
-  const res = editingMapelId
-    ? await updateMapel(editingMapelId, payload)
-    : await createMapel({ ...payload, is_locked: true });
-  setLoading(btn,false);
-  if (res.success) { showToast('Berhasil',editingMapelId?'Diperbarui.':'Ditambahkan.','success'); closeModal('modal-mapel'); loadAdminMapel(); cacheDel('mapel:'); }
-  else showToast('Error',res.error||'Gagal.','error');
+ const btn = q('btn-save-mapel'); setLoading(btn,true);
+ const payload = { nama, icon, color_from:from_, color_to:to_, urutan, waktu_buka, waktu_tutup };
+ const res = editingMapelId
+ ? await updateMapel(editingMapelId, payload)
+ : await createMapel({ ...payload, is_locked: true });
+ setLoading(btn,false);
+ if (res.success) { showToast('Berhasil',editingMapelId?'Diperbarui.':'Ditambahkan.','success'); closeModal('modal-mapel'); loadAdminMapel(); cacheDel('mapel:'); }
+ else showToast('Error',res.error||'Gagal.','error');
 }
 
 // ── SOAL ADMIN ────────────────────────────────────────────
 async function loadAdminSoalPage() {
-  const sel = q('soal-mapel-select'); if (!sel) return;
-  const { data } = await getMapel();
-  if (!data?.length) { q('admin-soal').innerHTML=`<h2 class="sec-title">Manajemen Soal</h2><div class="empty-full"><div class="e-icon">📚</div><p>Tambah mapel terlebih dahulu.</p></div>`; return; }
-  sel.innerHTML = `<option value="">-- Pilih --</option>` + data.map(m=>`<option value="${m.id}">${m.icon} ${esc(m.nama)}</option>`).join('');
-  if (activeAdminMapelId) { sel.value=activeAdminMapelId; onSoalMapelChange(); }
-  switchSoalAdminTab('kisi');
+ const sel = q('soal-mapel-select'); if (!sel) return;
+ const { data } = await getMapel();
+ if (!data?.length) { q('admin-soal').innerHTML=`<h2 class="sec-title">Manajemen Soal</h2><div class="empty-full"><div class="e-icon"></div><p>Tambah mapel terlebih dahulu.</p></div>`; return; }
+ sel.innerHTML = `<option value="">-- Pilih --</option>` + data.map(m=>`<option value="${m.id}">${m.icon} ${esc(m.nama)}</option>`).join('');
+ if (activeAdminMapelId) { sel.value=activeAdminMapelId; onSoalMapelChange(); }
+ switchSoalAdminTab('kisi');
 }
 
 function switchSoalAdminTab(tab) {
-  soalMode=tab;
-  q('stab-kisi')?.classList.toggle('active',tab==='kisi');
-  q('stab-questions')?.classList.toggle('active',tab==='questions');
-  q('kisi-admin-section').style.display     = tab==='kisi'      ? 'block' : 'none';
-  q('questions-admin-section').style.display = tab==='questions' ? 'block' : 'none';
-  if (!activeAdminMapelId) return;
-  if (tab==='kisi') loadKisiAdmin(activeAdminMapelId); else loadQuestionsAdmin(activeAdminMapelId);
+ soalMode=tab;
+ q('stab-kisi')?.classList.toggle('active',tab==='kisi');
+ q('stab-questions')?.classList.toggle('active',tab==='questions');
+ q('kisi-admin-section').style.display = tab==='kisi' ? 'block' : 'none';
+ q('questions-admin-section').style.display = tab==='questions' ? 'block' : 'none';
+ if (!activeAdminMapelId) return;
+ if (tab==='kisi') loadKisiAdmin(activeAdminMapelId); else loadQuestionsAdmin(activeAdminMapelId);
 }
 
 function onSoalMapelChange() {
-  const id=q('soal-mapel-select').value; activeAdminMapelId=id;
-  if (!id) {
-    q('kisi-admin-list').innerHTML=q('questions-admin-list').innerHTML=`<div class="empty-hint">Pilih mapel di atas.</div>`; return;
-  }
-  if (soalMode==='kisi') loadKisiAdmin(id); else loadQuestionsAdmin(id);
+ const id=q('soal-mapel-select').value; activeAdminMapelId=id;
+ if (!id) {
+ q('kisi-admin-list').innerHTML=q('questions-admin-list').innerHTML=`<div class="empty-hint">Pilih mapel di atas.</div>`; return;
+ }
+ if (soalMode==='kisi') loadKisiAdmin(id); else loadQuestionsAdmin(id);
 }
 
 function openSoalForMapel(mapelId) { activeAdminMapelId=mapelId; adminSection('soal'); }
 
 async function loadKisiAdmin(mapelId) {
-  const list=q('kisi-admin-list'); if(!list) return;
-  list.innerHTML=[...Array(3)].map(()=>`<div class="skel" style="height:68px;border-radius:12px;margin-bottom:10px"></div>`).join('');
-  const {data,error}=await getKisiKisi(mapelId);
-  if (error) { list.innerHTML=`<div class="empty-full" style="color:var(--red)">Gagal memuat data. <button class="btn btn-ghost btn-sm" onclick="loadKisiAdmin('${mapelId}')">Retry</button></div>`; return; }
-  if (!data?.length) { list.innerHTML=`<div class="empty-full"><div class="e-icon">📝</div><p>Belum ada kisi-kisi.</p></div>`; return; }
-  list.innerHTML=data.map((item,i)=>`
-    <div class="kisi-admin-item" style="animation-delay:${i*.04}s">
-      <div class="kisi-admin-hd">
-        <div class="kisi-admin-left">
-          <span class="tag ${item.tipe}">${item.tipe}</span>
-          <span class="kisi-admin-title">${esc(item.judul)}</span>
-        </div>
-        <div class="kisi-admin-acts">
-          <button class="btn btn-ghost btn-sm" onclick="openEditKisi('${item.id}','${esc(item.judul)}','${item.tipe}',${item.urutan},\`${item.konten.replace(/`/g,'\\`')}\`)">✏️</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteKisiConfirm('${item.id}','${esc(item.judul)}')">🗑️</button>
-        </div>
-      </div>
-      <div class="kisi-admin-preview">${esc(item.konten.substring(0,90))}${item.konten.length>90?'...':''}</div>
-    </div>`).join('');
+ const list=q('kisi-admin-list'); if(!list) return;
+ list.innerHTML=[...Array(3)].map(()=>`<div class="skel" style="height:68px;border-radius:12px;margin-bottom:10px"></div>`).join('');
+ const {data,error}=await getKisiKisi(mapelId);
+ if (error) { list.innerHTML=`<div class="empty-full" style="color:var(--red)">Gagal memuat data. <button class="btn btn-ghost btn-sm" onclick="loadKisiAdmin('${mapelId}')">Retry</button></div>`; return; }
+ if (!data?.length) { list.innerHTML=`<div class="empty-full"><div class="e-icon"></div><p>Belum ada kisi-kisi.</p></div>`; return; }
+ list.innerHTML=data.map((item,i)=>`
+ <div class="kisi-admin-item" style="animation-delay:${i*.04}s">
+ <div class="kisi-admin-hd">
+ <div class="kisi-admin-left">
+ <span class="tag ${item.tipe}">${item.tipe}</span>
+ <span class="kisi-admin-title">${esc(item.judul)}</span>
+ </div>
+ <div class="kisi-admin-acts">
+ <button class="btn btn-ghost btn-sm" onclick="openEditKisi('${item.id}','${esc(item.judul)}','${item.tipe}',${item.urutan},\`${item.konten.replace(/`/g,'\\`')}\`)"></button>
+ <button class="btn btn-danger btn-sm" onclick="deleteKisiConfirm('${item.id}','${esc(item.judul)}')"></button>
+ </div>
+ </div>
+ <div class="kisi-admin-preview">${esc(item.konten.substring(0,90))}${item.konten.length>90?'...':''}</div>
+ </div>`).join('');
 }
 
 function openAddKisi() {
-  if (!activeAdminMapelId) { showToast('Pilih Mapel','Pilih mapel dulu.','warning'); return; }
-  editingKisiId=null;
-  q('kisi-modal-title').textContent='Tambah Kisi-kisi';
-  q('kisi-form-judul').value=''; q('kisi-form-tipe').value='materi';
-  q('kisi-form-urutan').value='0'; q('kisi-form-konten').value='';
-  openModal('modal-kisi');
+ if (!activeAdminMapelId) { showToast('Pilih Mapel','Pilih mapel dulu.','warning'); return; }
+ editingKisiId=null;
+ q('kisi-modal-title').textContent='Tambah Kisi-kisi';
+ q('kisi-form-judul').value=''; q('kisi-form-tipe').value='materi';
+ q('kisi-form-urutan').value='0'; q('kisi-form-konten').value='';
+ openModal('modal-kisi');
 }
 function openEditKisi(id,judul,tipe,urutan,konten) {
-  editingKisiId=id; q('kisi-modal-title').textContent='Edit Kisi-kisi';
-  q('kisi-form-judul').value=judul; q('kisi-form-tipe').value=tipe;
-  q('kisi-form-urutan').value=urutan; q('kisi-form-konten').value=konten;
-  openModal('modal-kisi');
+ editingKisiId=id; q('kisi-modal-title').textContent='Edit Kisi-kisi';
+ q('kisi-form-judul').value=judul; q('kisi-form-tipe').value=tipe;
+ q('kisi-form-urutan').value=urutan; q('kisi-form-konten').value=konten;
+ openModal('modal-kisi');
 }
 async function saveKisi() {
-  const mapelId=activeAdminMapelId||q('soal-mapel-select')?.value;
-  const judul=q('kisi-form-judul').value.trim(), tipe=q('kisi-form-tipe').value;
-  const urutan=parseInt(q('kisi-form-urutan').value)||0, konten=q('kisi-form-konten').value.trim();
-  if (!judul) { showToast('Error','Judul wajib diisi.','error'); return; }
-  if (!konten){ showToast('Error','Konten wajib diisi.','error'); return; }
-  const btn=q('btn-save-kisi'); setLoading(btn,true);
-  const res = editingKisiId ? await updateKisiKisi(editingKisiId,{judul,tipe,urutan,konten}) : await createKisiKisi({judul,tipe,urutan,konten,mapel_id:mapelId});
-  setLoading(btn,false);
-  if (res.success) { showToast('Berhasil',editingKisiId?'Diperbarui.':'Ditambahkan.','success'); closeModal('modal-kisi'); loadKisiAdmin(mapelId); }
-  else showToast('Error',res.error||'Gagal.','error');
+ const mapelId=activeAdminMapelId||q('soal-mapel-select')?.value;
+ const judul=q('kisi-form-judul').value.trim(), tipe=q('kisi-form-tipe').value;
+ const urutan=parseInt(q('kisi-form-urutan').value)||0, konten=q('kisi-form-konten').value.trim();
+ if (!judul) { showToast('Error','Judul wajib diisi.','error'); return; }
+ if (!konten){ showToast('Error','Konten wajib diisi.','error'); return; }
+ const btn=q('btn-save-kisi'); setLoading(btn,true);
+ const res = editingKisiId ? await updateKisiKisi(editingKisiId,{judul,tipe,urutan,konten}) : await createKisiKisi({judul,tipe,urutan,konten,mapel_id:mapelId});
+ setLoading(btn,false);
+ if (res.success) { showToast('Berhasil',editingKisiId?'Diperbarui.':'Ditambahkan.','success'); closeModal('modal-kisi'); loadKisiAdmin(mapelId); }
+ else showToast('Error',res.error||'Gagal.','error');
 }
 async function deleteKisiConfirm(id,judul) {
-  if (!confirm(`Hapus "${judul}"?`)) return;
-  const res=await deleteKisiKisi(id); const mapelId=activeAdminMapelId;
-  if (res.success) { showToast('Dihapus','Dihapus.','warning'); if(mapelId) loadKisiAdmin(mapelId); }
-  else showToast('Error',res.error,'error');
+ if (!confirm(`Hapus "${judul}"?`)) return;
+ const res=await deleteKisiKisi(id); const mapelId=activeAdminMapelId;
+ if (res.success) { showToast('Dihapus','Dihapus.','warning'); if(mapelId) loadKisiAdmin(mapelId); }
+ else showToast('Error',res.error,'error');
 }
 
 async function loadQuestionsAdmin(mapelId) {
-  const list=q('questions-admin-list'); if(!list) return;
-  list.innerHTML=[...Array(3)].map(()=>`<div class="skel" style="height:80px;border-radius:12px;margin-bottom:10px"></div>`).join('');
-  const {data,error}=await getQuestions(mapelId);
-  if (error) { list.innerHTML=`<div class="empty-full" style="color:var(--red)">Gagal memuat soal.</div>`; return; }
-  if (!data?.length) { list.innerHTML=`<div class="empty-full"><div class="e-icon">❓</div><p>Belum ada soal.</p></div>`; return; }
-  const tLabel={mcq:'Pilihan Ganda',multiple:'Pilihan Kompleks',essay:'Essay'};
-  const tColor={mcq:'var(--blue)',multiple:'var(--purple)',essay:'var(--amber)'};
-  list.innerHTML=data.map((qu,i)=>`
-    <div class="kisi-admin-item" style="animation-delay:${i*.04}s">
-      <div class="kisi-admin-hd">
-        <div class="kisi-admin-left" style="flex:1;min-width:0">
-          <span class="q-num-badge">${i+1}</span>
-          <span class="tag" style="color:${tColor[qu.type]};background:rgba(79,142,247,.08)">${tLabel[qu.type]}</span>
-          <span class="kisi-admin-title">${esc(qu.question_text.substring(0,70))}${qu.question_text.length>70?'...':''}</span>
-        </div>
-        <div class="kisi-admin-acts" style="flex-shrink:0">
-          <button class="btn btn-danger btn-sm" onclick="deleteQuestionConfirm('${qu.id}')">🗑️</button>
-        </div>
-      </div>
-      ${qu.options?.length?`<div class="kisi-admin-preview">${qu.options.map(o=>`${o.is_correct?'✅':'◻️'} ${esc(o.option_text)}`).join(' · ')}</div>`:''}
-    </div>`).join('');
+ const list=q('questions-admin-list'); if(!list) return;
+ list.innerHTML=[...Array(3)].map(()=>`<div class="skel" style="height:80px;border-radius:12px;margin-bottom:10px"></div>`).join('');
+ const {data,error}=await getQuestions(mapelId);
+ if (error) { list.innerHTML=`<div class="empty-full" style="color:var(--red)">Gagal memuat soal.</div>`; return; }
+ if (!data?.length) { list.innerHTML=`<div class="empty-full"><div class="e-icon icon-question"></div><p>Belum ada soal.</p></div>`; return; }
+ const tLabel={mcq:'Pilihan Ganda',multiple:'Pilihan Kompleks',essay:'Essay'};
+ const tColor={mcq:'var(--blue)',multiple:'var(--purple)',essay:'var(--amber)'};
+ list.innerHTML=data.map((qu,i)=>`
+ <div class="kisi-admin-item" style="animation-delay:${i*.04}s">
+ <div class="kisi-admin-hd">
+ <div class="kisi-admin-left" style="flex:1;min-width:0">
+ <span class="q-num-badge">${i+1}</span>
+ <span class="tag" style="color:${tColor[qu.type]};background:rgba(79,142,247,.08)">${tLabel[qu.type]}</span>
+ <span class="kisi-admin-title">${esc(qu.question_text.substring(0,70))}${qu.question_text.length>70?'...':''}</span>
+ </div>
+ <div class="kisi-admin-acts" style="flex-shrink:0">
+ <button class="btn btn-danger btn-sm" onclick="deleteQuestionConfirm('${qu.id}')"></button>
+ </div>
+ </div>
+ ${qu.options?.length?`<div class="kisi-admin-preview">${qu.options.map(o=>`${o.is_correct?'':'◻'} ${esc(o.option_text)}`).join(' · ')}</div>`:''}
+ </div>`).join('');
 }
 
 async function deleteQuestionConfirm(id) {
-  if (!confirm('Hapus soal ini?')) return;
-  const res=await deleteQuestion(id);
-  if (res.success) { showToast('Dihapus','Soal dihapus.','warning'); loadQuestionsAdmin(activeAdminMapelId); }
-  else showToast('Error',res.error,'error');
+ if (!confirm('Hapus soal ini?')) return;
+ const res=await deleteQuestion(id);
+ if (res.success) { showToast('Dihapus','Soal dihapus.','warning'); loadQuestionsAdmin(activeAdminMapelId); }
+ else showToast('Error',res.error,'error');
 }
 
 // ── SOAL FORM ─────────────────────────────────────────────
 function initSoalOptions() {
-  soalOptions=[{option_text:'',is_correct:false},{option_text:'',is_correct:false},{option_text:'',is_correct:false},{option_text:'',is_correct:false}];
+ soalOptions=[{option_text:'',is_correct:false},{option_text:'',is_correct:false},{option_text:'',is_correct:false},{option_text:'',is_correct:false}];
 }
 
 function setSoalType(type) {
-  currentSoalType=type;
-  ['mcq','multiple','essay'].forEach(t => q(`stype-${t}`)?.classList.toggle('active',t===type));
-  const optSec=q('soal-options-section'), expLabel=q('soal-exp-label');
-  if (type==='essay') {
-    if(optSec) optSec.style.display='none';
-    if(expLabel) expLabel.textContent='Kunci Jawaban *';
-  } else {
-    if(optSec) optSec.style.display='block';
-    if(expLabel) expLabel.textContent='Pembahasan (Opsional)';
-    const lbl=q('soal-options-label');
-    if(lbl) lbl.textContent=type==='mcq'?'Pilihan Jawaban * (centang 1 benar)':'Pilihan Jawaban * (centang semua benar)';
-    renderSoalOptions();
-  }
+ currentSoalType=type;
+ ['mcq','multiple','essay'].forEach(t => q(`stype-${t}`)?.classList.toggle('active',t===type));
+ const optSec=q('soal-options-section'), expLabel=q('soal-exp-label');
+ if (type==='essay') {
+ if(optSec) optSec.style.display='none';
+ if(expLabel) expLabel.textContent='Kunci Jawaban *';
+ } else {
+ if(optSec) optSec.style.display='block';
+ if(expLabel) expLabel.textContent='Pembahasan (Opsional)';
+ const lbl=q('soal-options-label');
+ if(lbl) lbl.textContent=type==='mcq'?'Pilihan Jawaban * (centang 1 benar)':'Pilihan Jawaban * (centang semua benar)';
+ renderSoalOptions();
+ }
 }
 
 function renderSoalOptions() {
-  const list=q('soal-options-list'); if(!list) return;
-  list.innerHTML=soalOptions.map((o,i)=>`
-    <div class="opt-row">
-      <input type="${currentSoalType==='mcq'?'radio':'checkbox'}" name="soal-correct" ${o.is_correct?'checked':''} class="opt-check" onchange="toggleSoalCorrect(${i},this.checked)">
-      <input type="text" class="opt-input" value="${esc(o.option_text)}" placeholder="Pilihan ${String.fromCharCode(65+i)}..." oninput="updateSoalOpt(${i},this.value)">
-      ${soalOptions.length>2?`<button class="btn-rm-opt" onclick="removeSoalOpt(${i})">✕</button>`:''}
-    </div>`).join('');
+ const list=q('soal-options-list'); if(!list) return;
+ list.innerHTML=soalOptions.map((o,i)=>`
+ <div class="opt-row">
+ <input type="${currentSoalType==='mcq'?'radio':'checkbox'}" name="soal-correct" ${o.is_correct?'checked':''} class="opt-check" onchange="toggleSoalCorrect(${i},this.checked)">
+ <input type="text" class="opt-input" value="${esc(o.option_text)}" placeholder="Pilihan ${String.fromCharCode(65+i)}..." oninput="updateSoalOpt(${i},this.value)">
+ ${soalOptions.length>2?`<button class="btn-rm-opt" onclick="removeSoalOpt(${i})">&times;</button>`:''}
+ </div>`).join('');
 }
 
 function addSoalOpt() {
-  if(soalOptions.length>=8){showToast('Batas','Maksimal 8 pilihan.','warning');return;}
-  soalOptions.push({option_text:'',is_correct:false}); renderSoalOptions();
+ if(soalOptions.length>=8){showToast('Batas','Maksimal 8 pilihan.','warning');return;}
+ soalOptions.push({option_text:'',is_correct:false}); renderSoalOptions();
 }
-function removeSoalOpt(i)    { soalOptions.splice(i,1); renderSoalOptions(); }
-function updateSoalOpt(i,v)  { if(soalOptions[i]) soalOptions[i].option_text=v; }
+function removeSoalOpt(i) { soalOptions.splice(i,1); renderSoalOptions(); }
+function updateSoalOpt(i,v) { if(soalOptions[i]) soalOptions[i].option_text=v; }
 function toggleSoalCorrect(i,checked) {
-  if(currentSoalType==='mcq') soalOptions.forEach((o,idx)=>o.is_correct=idx===i);
-  else if(soalOptions[i]) soalOptions[i].is_correct=checked;
-  renderSoalOptions();
+ if(currentSoalType==='mcq') soalOptions.forEach((o,idx)=>o.is_correct=idx===i);
+ else if(soalOptions[i]) soalOptions[i].is_correct=checked;
+ renderSoalOptions();
 }
 
 function openAddQuestion() {
-  if(!activeAdminMapelId){showToast('Pilih Mapel','Pilih mapel dulu.','warning');return;}
-  editingSoalId=null; currentSoalType='mcq'; initSoalOptions();
-  q('soal-modal-title').textContent='Tambah Soal';
-  q('soal-form-text').value=''; q('soal-form-exp').value='';
-  setSoalType('mcq'); openModal('modal-soal');
+ if(!activeAdminMapelId){showToast('Pilih Mapel','Pilih mapel dulu.','warning');return;}
+ editingSoalId=null; currentSoalType='mcq'; initSoalOptions();
+ q('soal-modal-title').textContent='Tambah Soal';
+ q('soal-form-text').value=''; q('soal-form-exp').value='';
+ setSoalType('mcq'); openModal('modal-soal');
 }
 
 async function saveSoal() {
-  const mapelId=activeAdminMapelId;
-  const question_text=q('soal-form-text')?.value.trim()||'';
-  const explanation=q('soal-form-exp')?.value.trim()||'';
-  const btn=q('btn-save-soal'); setLoading(btn,true);
-  const res=await saveQuestion(mapelId,{question_text,type:currentSoalType,explanation,options:currentSoalType!=='essay'?soalOptions:[],urutan:0});
-  setLoading(btn,false);
-  if (res.success) { showToast('Berhasil','Soal disimpan!','success'); closeModal('modal-soal'); loadQuestionsAdmin(mapelId); }
-  else showToast('Gagal',res.error,'error');
+ const mapelId=activeAdminMapelId;
+ const question_text=q('soal-form-text')?.value.trim()||'';
+ const explanation=q('soal-form-exp')?.value.trim()||'';
+ const btn=q('btn-save-soal'); setLoading(btn,true);
+ const res=await saveQuestion(mapelId,{question_text,type:currentSoalType,explanation,options:currentSoalType!=='essay'?soalOptions:[],urutan:0});
+ setLoading(btn,false);
+ if (res.success) { showToast('Berhasil','Soal disimpan!','success'); closeModal('modal-soal'); loadQuestionsAdmin(mapelId); }
+ else showToast('Gagal',res.error,'error');
 }
 
 // ── BROADCAST ADMIN ───────────────────────────────────────
 async function loadBroadcastPage() {
-  const hist=q('broadcast-history'); if(!hist) return;
-  hist.innerHTML=`<div class="skel" style="height:60px;border-radius:10px;margin-bottom:8px"></div>`.repeat(3);
-  const data=await getBroadcastHistory();
-  if (!data.length) { hist.innerHTML=`<div class="empty-hint">Belum ada broadcast.</div>`; return; }
-  hist.innerHTML=data.map(b=>`
-    <div class="bcast-hist-item">
-      <div class="bcast-hist-top">
-        <strong>${esc(b.title||'Pengumuman')}</strong>
-        <span class="td-date">${fmtDate(b.created_at)}</span>
-      </div>
-      <div class="bcast-hist-msg">${esc(b.message)}</div>
-      ${b.image_url ? `<img src="${b.image_url}" alt="foto" class="bcast-hist-img" onclick="window.open('${b.image_url}','_blank')">` : ''}
-    </div>`).join('');
+ const hist=q('broadcast-history'); if(!hist) return;
+ hist.innerHTML=`<div class="skel" style="height:60px;border-radius:10px;margin-bottom:8px"></div>`.repeat(3);
+ const data=await getBroadcastHistory();
+ if (!data.length) { hist.innerHTML=`<div class="empty-hint">Belum ada broadcast.</div>`; return; }
+ hist.innerHTML=data.map(b=>`
+ <div class="bcast-hist-item">
+ <div class="bcast-hist-top">
+ <strong>${esc(b.title||'Pengumuman')}</strong>
+ <span class="td-date">${fmtDate(b.created_at)}</span>
+ </div>
+ <div class="bcast-hist-msg">${esc(b.message)}</div>
+ ${b.image_url ? `<img src="${b.image_url}" alt="foto" class="bcast-hist-img" onclick="window.open('${b.image_url}','_blank')">` : ''}
+ </div>`).join('');
 }
 
 function previewBcastImage(input) {
-  const wrap = q('bcast-img-preview-wrap');
-  const label = q('bcast-file-text');
-  if (!input.files?.[0]) { if(wrap) wrap.innerHTML=''; return; }
-  const file = input.files[0];
-  label.textContent = '📎 ' + file.name;
-  const url = URL.createObjectURL(file);
-  if (wrap) wrap.innerHTML = `
-    <div style="position:relative;display:inline-block;margin-top:8px;">
-      <img src="${url}" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid var(--border-m);">
-      <button onclick="removeBcastImage()" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
-    </div>`;
+ const wrap = q('bcast-img-preview-wrap');
+ const label = q('bcast-file-text');
+ if (!input.files?.[0]) { if(wrap) wrap.innerHTML=''; return; }
+ const file = input.files[0];
+ label.textContent = ' ' + file.name;
+ const url = URL.createObjectURL(file);
+ if (wrap) wrap.innerHTML = `
+ <div style="position:relative;display:inline-block;margin-top:8px;">
+ <img src="${url}" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid var(--border-m);">
+ <button onclick="removeBcastImage()" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:12px;">&times;</button>
+ </div>`;
 }
 
 function removeBcastImage() {
-  const fi = q('bcast-image');
-  if (fi) fi.value = '';
-  const wrap = q('bcast-img-preview-wrap');
-  if (wrap) wrap.innerHTML = '';
-  const label = q('bcast-file-text');
-  if (label) label.textContent = '📎 Pilih foto...';
+ const fi = q('bcast-image');
+ if (fi) fi.value = '';
+ const wrap = q('bcast-img-preview-wrap');
+ if (wrap) wrap.innerHTML = '';
+ const label = q('bcast-file-text');
+ if (label) label.textContent = ' Pilih foto...';
 }
 
 async function handleSendBroadcast() {
-  const title   = q('bcast-title')?.value.trim()||'Pengumuman';
-  const message = q('bcast-message')?.value.trim();
-  if (!message) { showToast('Error','Pesan tidak boleh kosong.','error'); return; }
+ const title = q('bcast-title')?.value.trim()||'Pengumuman';
+ const message = q('bcast-message')?.value.trim();
+ if (!message) { showToast('Error','Pesan tidak boleh kosong.','error'); return; }
 
-  const btn = q('btn-send-bcast'); setLoading(btn, true);
+ const btn = q('btn-send-bcast'); setLoading(btn, true);
 
-  // Upload foto jika ada
-  let imageUrl = null;
-  const fileInput = q('bcast-image');
-  if (fileInput?.files?.[0]) {
-    const file = fileInput.files[0];
-    if (file.size > 3 * 1024 * 1024) {
-      showToast('Error', 'Ukuran foto max 3 MB.', 'error');
-      setLoading(btn, false); return;
-    }
-    const upRes = await uploadBroadcastImage(file);
-    if (!upRes.success) {
-      showToast('Gagal Upload', upRes.error, 'error');
-      setLoading(btn, false); return;
-    }
-    imageUrl = upRes.url;
-  }
+ // Upload foto jika ada
+ let imageUrl = null;
+ const fileInput = q('bcast-image');
+ if (fileInput?.files?.[0]) {
+ const file = fileInput.files[0];
+ if (file.size > 3 * 1024 * 1024) {
+ showToast('Error', 'Ukuran foto max 3 MB.', 'error');
+ setLoading(btn, false); return;
+ }
+ const upRes = await uploadBroadcastImage(file);
+ if (!upRes.success) {
+ showToast('Gagal Upload', upRes.error, 'error');
+ setLoading(btn, false); return;
+ }
+ imageUrl = upRes.url;
+ }
 
-  const res = await sendBroadcast(title, message, imageUrl);
-  setLoading(btn, false);
-  if (res.success) {
-    showToast('Terkirim!', 'Broadcast dikirim.', 'success');
-    q('bcast-title').value = '';
-    q('bcast-message').value = '';
-    if (fileInput) { fileInput.value = ''; q('bcast-img-preview')?.remove(); }
-    loadBroadcastPage();
-  } else showToast('Gagal', res.error, 'error');
+ const res = await sendBroadcast(title, message, imageUrl);
+ setLoading(btn, false);
+ if (res.success) {
+ showToast('Terkirim', 'Broadcast dikirim.', 'success');
+ q('bcast-title').value = '';
+ q('bcast-message').value = '';
+ if (fileInput) { fileInput.value = ''; q('bcast-img-preview')?.remove(); }
+ loadBroadcastPage();
+ } else showToast('Gagal', res.error, 'error');
 }
 
 // ── MODAL ─────────────────────────────────────────────────
-const openModal  = id => { const el=q(id); if(el){el.classList.add('open');document.body.style.overflow='hidden';} };
+const openModal = id => { const el=q(id); if(el){el.classList.add('open');document.body.style.overflow='hidden';} };
 const closeModal = id => { const el=q(id); if(el){el.classList.remove('open');document.body.style.overflow='';} };
 document.addEventListener('click', e => {
-  if (e.target.classList.contains('modal-bg')) { e.target.classList.remove('open'); document.body.style.overflow=''; }
+ if (e.target.classList.contains('modal-bg')) { e.target.classList.remove('open'); document.body.style.overflow=''; }
 });
 
 // ════════════════════════════════════════════════════════════
-//  SYARAT & KETENTUAN MODAL
+// SYARAT & KETENTUAN MODAL
 // ════════════════════════════════════════════════════════════
 
 function openTermsModal() {
-  openModal('modal-terms');
+ openModal('modal-terms');
 }
 
 function acceptTermsFromModal() {
-  // Centang checkbox di form yang sedang aktif
-  const regTerms    = q('reg-terms');
-  const googleTerms = q('google-terms');
-  if (regTerms)    regTerms.checked    = true;
-  if (googleTerms) googleTerms.checked = true;
-  // Sembunyikan pesan error
-  const te = q('terms-error');    if (te) te.style.display = 'none';
-  const ge = q('google-terms-error'); if (ge) ge.style.display = 'none';
-  closeModal('modal-terms');
-  showToast('Disetujui', 'Syarat dan Ketentuan telah disetujui.', 'success');
+ // Centang checkbox di form yang sedang aktif
+ const regTerms = q('reg-terms');
+ const googleTerms = q('google-terms');
+ if (regTerms) regTerms.checked = true;
+ if (googleTerms) googleTerms.checked = true;
+ // Sembunyikan pesan error
+ const te = q('terms-error'); if (te) te.style.display = 'none';
+ const ge = q('google-terms-error'); if (ge) ge.style.display = 'none';
+ closeModal('modal-terms');
+ showToast('Disetujui', 'Syarat dan Ketentuan telah disetujui.', 'success');
 }
 
 // ════════════════════════════════════════════════════════════
-//  BOOT — ROOT CAUSE FIX UTAMA
+// BOOT — ROOT CAUSE FIX UTAMA
 // ════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  setRole('siswa');
-  showAppLoading('Memeriksa sesi...');
+ setRole('siswa');
+ showAppLoading('Memeriksa sesi...');
 
-  console.log('[Boot] App dimuat, menunggu auth state...');
+ console.log('[Boot] App dimuat, menunggu auth state...');
 
-  // ── DETEKSI KONEKSI — tampilkan banner offline/online ──
-  function updateConnectionBanner(online) {
-    let banner = document.getElementById('conn-banner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'conn-banner';
-      banner.style.cssText = [
-        'position:fixed;top:0;left:0;right:0;z-index:9999',
-        'padding:8px 16px;font-size:13px;font-weight:600',
-        'text-align:center;transition:transform .3s ease,opacity .3s ease',
-        'transform:translateY(-100%);opacity:0'
-      ].join(';');
-      document.body.appendChild(banner);
-    }
-    if (online) {
-      banner.textContent = '✅ Koneksi pulih — memuat ulang data...';
-      banner.style.background = '#16a34a';
-      banner.style.color = '#fff';
-      banner.style.transform = 'translateY(0)';
-      banner.style.opacity = '1';
-      setTimeout(() => {
-        banner.style.transform = 'translateY(-100%)';
-        banner.style.opacity = '0';
-      }, 3000);
-    } else {
-      banner.textContent = '📡 Tidak ada koneksi internet — mode offline';
-      banner.style.background = '#dc2626';
-      banner.style.color = '#fff';
-      banner.style.transform = 'translateY(0)';
-      banner.style.opacity = '1';
-    }
-  }
+ // ── DETEKSI KONEKSI — tampilkan banner offline/online ──
+ function updateConnectionBanner(online) {
+ let banner = document.getElementById('conn-banner');
+ if (!banner) {
+ banner = document.createElement('div');
+ banner.id = 'conn-banner';
+ banner.style.cssText = [
+ 'position:fixed;top:0;left:0;right:0;z-index:9999',
+ 'padding:8px 16px;font-size:13px;font-weight:600',
+ 'text-align:center;transition:transform .3s ease,opacity .3s ease',
+ 'transform:translateY(-100%);opacity:0'
+ ].join(';');
+ document.body.appendChild(banner);
+ }
+ if (online) {
+ banner.textContent = 'Koneksi pulih — memuat ulang data...';
+ banner.style.background = '#16a34a';
+ banner.style.color = '#fff';
+ banner.style.transform = 'translateY(0)';
+ banner.style.opacity = '1';
+ setTimeout(() => {
+ banner.style.transform = 'translateY(-100%)';
+ banner.style.opacity = '0';
+ }, 3000);
+ } else {
+ banner.textContent = 'Tidak ada koneksi internet — mode offline';
+ banner.style.background = '#dc2626';
+ banner.style.color = '#fff';
+ banner.style.transform = 'translateY(0)';
+ banner.style.opacity = '1';
+ }
+ }
 
-  // Daftarkan listener koneksi dari supabase.js
-  onConnectionChange(function(online) {
-    updateConnectionBanner(online);
-    if (online && currentUser && !currentProfile) {
-      // Reconnect: coba muat profil lagi
-      console.log('[Net] Kembali online, mencoba muat ulang profil...');
-      showAppLoading('Menghubungkan ke server...');
-      sb.auth.getSession().then(function({ data: { session } }) {
-        if (session) initApp(session);
-        else { hideAppLoading(); showPage('page-login'); }
-      });
-    }
-  });
+ // Daftarkan listener koneksi dari supabase.js
+ onConnectionChange(function(online) {
+ updateConnectionBanner(online);
+ if (online && currentUser && !currentProfile) {
+ // Reconnect: coba muat profil lagi
+ console.log('[Net] Kembali online, mencoba muat ulang profil...');
+ showAppLoading('Menghubungkan ke server...');
+ sb.auth.getSession().then(function({ data: { session } }) {
+ if (session) initApp(session);
+ else { hideAppLoading(); showPage('page-login'); }
+ });
+ }
+ });
 
-  // Jika sudah offline saat load
-  if (!isOnline()) updateConnectionBanner(false);
+ // Jika sudah offline saat load
+ if (!isOnline()) updateConnectionBanner(false);
 
-  // ── AUTO-LOGIN: cek session tersimpan langsung ──
-  sb.auth.getSession().then(({ data: { session } }) => {
-    if (session && !currentProfile && !isAuthBusy()) {
-      console.log('[Boot] getSession() menemukan sesi aktif — inisialisasi langsung');
-      clearTimeout(safetyTimer);
-      initApp(session);
-    }
-  });
+ // ── AUTO-LOGIN: cek session tersimpan langsung ──
+ sb.auth.getSession().then(({ data: { session } }) => {
+ if (session && !currentProfile && !isAuthBusy()) {
+ console.log('[Boot] getSession() menemukan sesi aktif — inisialisasi langsung');
+ clearTimeout(safetyTimer);
+ initApp(session);
+ }
+ });
 
-  // Safety timeout 10 detik — jika onAuthStateChange tidak pernah terpicu
-  const safetyTimer = setTimeout(() => {
-    console.warn('[Boot] Safety timeout 10 dtk — onAuthStateChange tidak terpicu');
-    hideAppLoading();
-    if (!currentUser) showPage('page-login');
-  }, 10_000);
+ // Safety timeout 10 detik — jika onAuthStateChange tidak pernah terpicu
+ const safetyTimer = setTimeout(() => {
+ console.warn('[Boot] Safety timeout 10 dtk — onAuthStateChange tidak terpicu');
+ hideAppLoading();
+ if (!currentUser) showPage('page-login');
+ }, 10_000);
 
-  sb.auth.onAuthStateChange(async (event, session) => {
-    console.log('[Auth] onAuthStateChange:', event, '| session:', session ? 'ada' : 'null');
+ sb.auth.onAuthStateChange(async (event, session) => {
+ console.log('[Auth] onAuthStateChange:', event, '| session:', session ? 'ada' : 'null');
 
-    if (isAuthBusy()) {
-      console.log('[Auth] Busy (OTP verify) — skip onAuthStateChange');
-      return;
-    }
+ if (isAuthBusy()) {
+ console.log('[Auth] Busy (OTP verify) — skip onAuthStateChange');
+ return;
+ }
 
-    clearTimeout(safetyTimer);
+ clearTimeout(safetyTimer);
 
-    if (event === 'SIGNED_OUT' || !session) {
-      console.log('[Auth] SIGNED_OUT atau session null');
-      currentUser = currentProfile = null;
-      cacheClear();
-      rtUnsubscribeAll();
-      hideAppLoading();
-      showPage('page-login');
-      return;
-    }
+ if (event === 'SIGNED_OUT' || !session) {
+ console.log('[Auth] SIGNED_OUT atau session null');
+ currentUser = currentProfile = null;
+ cacheClear();
+ rtStop();
+ hideAppLoading();
+ showPage('page-login');
+ return;
+ }
 
-    if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-      if (event === 'TOKEN_REFRESHED' && currentProfile) {
-        console.log('[Auth] TOKEN_REFRESHED — sudah login, skip init');
-        return;
-      }
-      console.log('[Auth]', event, '— mulai initApp');
-      await initApp(session);
-    }
-  });
+ if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+ if (event === 'TOKEN_REFRESHED' && currentProfile) {
+ console.log('[Auth] TOKEN_REFRESHED — sudah login, skip init');
+ return;
+ }
+ console.log('[Auth]', event, '— mulai initApp');
+ await initApp(session);
+ }
+ });
 });
 
 // ════════════════════════════════════════════════════════════
-//  GOOGLE NAME INPUT — Setelah login Google, input nama dulu
+// GOOGLE NAME INPUT — Setelah login Google, input nama dulu
 // ════════════════════════════════════════════════════════════
 
 let _googleNameSession = null; // simpan session sementara
 
 async function checkGoogleNewUser(session) {
-  const user = session.user;
-  const isGoogle = (user.app_metadata?.provider === 'google') ||
-    (user.app_metadata?.providers?.includes('google'));
-  if (!isGoogle) return false;
+ const user = session.user;
+ const isGoogle = (user.app_metadata?.provider === 'google') ||
+ (user.app_metadata?.providers?.includes('google'));
+ if (!isGoogle) return false;
 
-  // Cek apakah profile sudah ada DAN sudah punya nama custom (bukan dari Google)
-  const profile = await getProfile(user.id);
+ // Cek apakah profile sudah ada DAN sudah punya nama custom (bukan dari Google)
+ const profile = await getProfile(user.id);
 
-  // Jika profile belum ada, atau nama masih nama Google (auto-generated)
-  if (!profile) {
-    _googleNameSession = session;
-    const googleName = user.user_metadata?.full_name || user.user_metadata?.name || '';
-    if (q('google-nama-input')) q('google-nama-input').value = googleName;
-    hideAppLoading();
-    showPage('page-google-name');
-    return true;
-  }
+ // Jika profile belum ada, atau nama masih nama Google (auto-generated)
+ if (!profile) {
+ _googleNameSession = session;
+ const googleName = user.user_metadata?.full_name || user.user_metadata?.name || '';
+ if (q('google-nama-input')) q('google-nama-input').value = googleName;
+ hideAppLoading();
+ showPage('page-google-name');
+ return true;
+ }
 
-  // Cek flag "nama sudah diisi manual"
-  if (!profile.nama_manual) {
-    _googleNameSession = session;
-    if (q('google-nama-input')) q('google-nama-input').value = profile.nama_lengkap || '';
-    hideAppLoading();
-    showPage('page-google-name');
-    return true;
-  }
+ // Cek flag "nama sudah diisi manual"
+ if (!profile.nama_manual) {
+ _googleNameSession = session;
+ if (q('google-nama-input')) q('google-nama-input').value = profile.nama_lengkap || '';
+ hideAppLoading();
+ showPage('page-google-name');
+ return true;
+ }
 
-  return false;
+ return false;
 }
 
 async function submitGoogleName() {
-  const nama  = q('google-nama-input')?.value.trim();
-  const kelas = q('google-kelas-input')?.value || '8F';
-  if (!nama || nama.length < 2) {
-    showToast('Error', 'Nama lengkap minimal 2 karakter.', 'error'); return;
-  }
-  if (!kelas) {
-    showToast('Error', 'Pilih kelas terlebih dahulu.', 'error'); return;
-  }
+ const nama = q('google-nama-input')?.value.trim();
+ const kelas = q('google-kelas-input')?.value || '8F';
+ if (!nama || nama.length < 2) {
+ showToast('Error', 'Nama lengkap minimal 2 karakter.', 'error'); return;
+ }
+ if (!kelas) {
+ showToast('Error', 'Pilih kelas terlebih dahulu.', 'error'); return;
+ }
 
-  const termsChecked = q('google-terms')?.checked;
-  const termsErr = q('google-terms-error');
-  if (!termsChecked) {
-    if (termsErr) termsErr.style.display = 'block';
-    showToast('Perlu Persetujuan', 'Centang Syarat dan Ketentuan untuk melanjutkan.', 'warning');
-    return;
-  }
-  if (termsErr) termsErr.style.display = 'none';
+ const termsChecked = q('google-terms')?.checked;
+ const termsErr = q('google-terms-error');
+ if (!termsChecked) {
+ if (termsErr) termsErr.style.display = 'block';
+ showToast('Perlu Persetujuan', 'Centang Syarat dan Ketentuan untuk melanjutkan.', 'warning');
+ return;
+ }
+ if (termsErr) termsErr.style.display = 'none';
 
-  const btn = q('btn-google-name');
-  setLoading(btn, true);
-  showAppLoading('Menyimpan profil...');
+ const btn = q('btn-google-name');
+ setLoading(btn, true);
+ showAppLoading('Menyimpan profil...');
 
-  const session = _googleNameSession;
-  if (!session) { hideAppLoading(); showPage('page-login'); return; }
-  const user = session.user;
-  const now  = new Date().toISOString();
+ const session = _googleNameSession;
+ if (!session) { hideAppLoading(); showPage('page-login'); return; }
+ const user = session.user;
+ const now = new Date().toISOString();
 
-  const { error } = await sb.from('profiles').upsert({
-    user_id:          user.id,
-    nama_lengkap:     nama,
-    email:            user.email,
-    kelas,
-    role:             'siswa',
-    status:           'pending',
-    terms_accepted:   true,
-    terms_accepted_at: now,
-    nama_manual:      true
-  }, { onConflict: 'user_id' });
+ const { error } = await sb.from('profiles').upsert({
+ user_id: user.id,
+ nama_lengkap: nama,
+ email: user.email,
+ kelas,
+ role: 'siswa',
+ status: 'pending',
+ terms_accepted: true,
+ terms_accepted_at: now,
+ nama_manual: true
+ }, { onConflict: 'user_id' });
 
-  setLoading(btn, false);
+ setLoading(btn, false);
 
-  if (error) {
-    hideAppLoading();
-    showToast('Error', 'Gagal menyimpan nama: ' + error.message, 'error'); return;
-  }
+ if (error) {
+ hideAppLoading();
+ showToast('Error', 'Gagal menyimpan nama: ' + error.message, 'error'); return;
+ }
 
-  _googleNameSession = null;
-  const profile = await getProfile(user.id);
-  currentUser = user; currentProfile = profile;
-  routeProfile(profile);
+ _googleNameSession = null;
+ const profile = await getProfile(user.id);
+ currentUser = user; currentProfile = profile;
+ routeProfile(profile);
 }
 
 // ════════════════════════════════════════════════════════════
-//  LEADERBOARD
+// LEADERBOARD
 // ════════════════════════════════════════════════════════════
 
 async function openLeaderboard() {
-  openModal('modal-leaderboard');
-  // Isi filter mapel
-  const select = q('lb-mapel-filter');
-  if (select && select.options.length <= 1) {
-    const { data } = await getMapelCached();
-    (data || []).forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.id; opt.textContent = m.icon + ' ' + m.nama;
-      select.appendChild(opt);
-    });
-  }
-  await loadLeaderboard();
+ openModal('modal-leaderboard');
+ // Isi filter mapel
+ const select = q('lb-mapel-filter');
+ if (select && select.options.length <= 1) {
+ const { data } = await getMapelCached();
+ (data || []).forEach(m => {
+ const opt = document.createElement('option');
+ opt.value = m.id; opt.textContent = m.icon + ' ' + m.nama;
+ select.appendChild(opt);
+ });
+ }
+ await loadLeaderboard();
 }
 
 async function loadLeaderboard() {
-  const content = q('leaderboard-content');
-  const mapelId = q('lb-mapel-filter')?.value || '';
-  if (!content) return;
+ const content = q('leaderboard-content');
+ const mapelId = q('lb-mapel-filter')?.value || '';
+ if (!content) return;
 
-  content.innerHTML = [1,2,3].map(() =>
-    `<div class="skel" style="height:68px;border-radius:14px;margin-bottom:10px"></div>`
-  ).join('');
+ content.innerHTML = [1,2,3].map(() =>
+ `<div class="skel" style="height:68px;border-radius:14px;margin-bottom:10px"></div>`
+ ).join('');
 
-  const { data } = await getLeaderboard(mapelId);
+ const { data } = await getLeaderboard(mapelId);
 
-  if (!data || !data.length) {
-    content.innerHTML = `<div class="empty"><div class="e-icon">🏆</div><p style="color:var(--muted)">Belum ada hasil quiz. Coba kerjakan soal latihan dulu!</p></div>`;
-    return;
-  }
+ if (!data || !data.length) {
+ content.innerHTML = `<div class="empty"><div class="e-icon icon-trophy"></div><p style="color:var(--muted)">Belum ada hasil quiz. Coba kerjakan soal latihan dulu!</p></div>`;
+ return;
+ }
 
-  const myName = currentProfile?.nama_lengkap || '';
-  const rankEmoji = ['🥇','🥈','🥉'];
-  const rankClass = ['gold','silver','bronze'];
-  const starLabels = ['','⭐','','','','']; // 1-5
+ const myName = currentProfile?.nama_lengkap || '';
+ const rankEmoji = ['','',''];
+ const rankClass = ['gold','silver','bronze'];
+ const starLabels = ['','⭐','','','','']; // 1-5
 
-  content.innerHTML = data.slice(0, 20).map((r, i) => {
-    const isMe = r.nama_lengkap === myName;
-    const mins = Math.floor(r.time_ms / 60000);
-    const secs = Math.floor((r.time_ms % 60000) / 1000);
-    const timeStr = r.time_ms > 0 ? `⏱ ${mins}m ${secs}s` : '';
-    const rankLabel = i < 3 ? rankEmoji[i] : `${i+1}`;
-    const rankCls = i < 3 ? rankClass[i] : '';
-    return `
-      <div class="lb-item ${isMe ? 'lb-you' : ''}" style="animation-delay:${i*.04}s">
-        <div class="lb-rank ${rankCls}">${rankLabel}</div>
-        <div class="lb-info">
-          <div class="lb-name">${esc(r.nama_lengkap)} ${isMe ? '<span style="font-size:11px;color:var(--blue)">(Kamu)</span>' : ''}</div>
-          <div class="lb-meta">${timeStr}</div>
-        </div>
-        <div class="lb-score">
-          <div class="lb-pct">${r.pct}%</div>
-          <div class="lb-time">${r.score}/${r.total} benar</div>
-        </div>
-      </div>`;
-  }).join('');
+ content.innerHTML = data.slice(0, 20).map((r, i) => {
+ const isMe = r.nama_lengkap === myName;
+ const mins = Math.floor(r.time_ms / 60000);
+ const secs = Math.floor((r.time_ms % 60000) / 1000);
+ const timeStr = r.time_ms > 0 ? `⏱ ${mins}m ${secs}s` : '';
+ const rankLabel = i < 3 ? rankEmoji[i] : `${i+1}`;
+ const rankCls = i < 3 ? rankClass[i] : '';
+ return `
+ <div class="lb-item ${isMe ? 'lb-you' : ''}" style="animation-delay:${i*.04}s">
+ <div class="lb-rank ${rankCls}">${rankLabel}</div>
+ <div class="lb-info">
+ <div class="lb-name">${esc(r.nama_lengkap)} ${isMe ? '<span style="font-size:11px;color:var(--blue)">(Kamu)</span>' : ''}</div>
+ <div class="lb-meta">${timeStr}</div>
+ </div>
+ <div class="lb-score">
+ <div class="lb-pct">${r.pct}%</div>
+ <div class="lb-time">${r.score}/${r.total} benar</div>
+ </div>
+ </div>`;
+ }).join('');
 }
 
 // ════════════════════════════════════════════════════════════
-//  RATING POPUP — Muncul sekali setelah quiz selesai
+// RATING POPUP — Muncul sekali setelah quiz selesai
 // ════════════════════════════════════════════════════════════
 
 const RATING_DONE_KEY = 'kisi8f_rated';
 let _selectedRating = 0;
-let _quizTimeStart  = null;
+let _quizTimeStart = null;
 
 function quizStart() {
-  _quizTimeStart = Date.now();
+ _quizTimeStart = Date.now();
 }
 
 function setRatingStar(val) {
   _selectedRating = val;
-  const labels = ['', 'Kurang bagus', 'Cukup', 'Lumayan', 'Bagus', 'Luar biasa'];
-  const stars = document.querySelectorAll('.star-btn');
-  stars.forEach((s, i) => s.classList.toggle('active', i < val));
+  const labels = ['', 'Kurang', 'Cukup', 'Lumayan', 'Bagus', 'Luar biasa'];
+  document.querySelectorAll('.star-btn').forEach((s, i) => s.classList.toggle('active', i < val));
   const lbl = q('star-label'); if (lbl) lbl.textContent = labels[val] || '';
-  const wrap = q('rating-comment-wrap');
-  if (wrap) wrap.style.display = val ? 'block' : 'none';
+  const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = val ? 'block' : 'none';
   const btn = q('btn-submit-rating'); if (btn) btn.disabled = false;
+}
+
+// Hover preview untuk star buttons
+function initStarHover() {
+  const row = q('star-rating-row'); if (!row) return;
+  row.addEventListener('mouseover', function(e) {
+    const btn = e.target.closest('.star-btn');
+    if (!btn) return;
+    const hoverVal = parseInt(btn.dataset.val);
+    document.querySelectorAll('.star-btn').forEach((s, i) => {
+      s.classList.toggle('hover-active', i < hoverVal);
+    });
+  });
+  row.addEventListener('mouseleave', function() {
+    document.querySelectorAll('.star-btn').forEach(s => s.classList.remove('hover-active'));
+  });
 }
 
 async function maybeShowRating(scoreText) {
@@ -1673,163 +1688,171 @@ async function maybeShowRating(scoreText) {
   const rated = await hasRated();
   if (rated) { localStorage.setItem(RATING_DONE_KEY, '1'); return; }
   const resEl = q('rating-quiz-result');
-  if (resEl) resEl.textContent = scoreText;
+  if (resEl) { resEl.textContent = scoreText; resEl.style.display = 'block'; }
   _selectedRating = 0;
-  const stars = document.querySelectorAll('.star-btn');
-  stars.forEach(s => s.classList.remove('active'));
-  const lbl = q('star-label'); if (lbl) lbl.textContent = 'Ketuk bintang untuk memberi nilai';
+  document.querySelectorAll('.star-btn').forEach(s => { s.classList.remove('active'); s.classList.remove('hover-active'); });
+  const lbl = q('star-label'); if (lbl) lbl.textContent = 'Seleksi bintang untuk memberi nilai';
   const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = 'none';
   const btn = q('btn-submit-rating'); if (btn) btn.disabled = true;
   if (q('rating-comment')) q('rating-comment').value = '';
+  const title = q('modal-rating-title'); if (title) title.textContent = 'Kuis Selesai!';
   openModal('modal-rating');
+  initStarHover();
 }
 
 async function submitRating() {
-  if (!_selectedRating) return;
-  const komentar = q('rating-comment')?.value.trim() || '';
-  const btn = q('btn-submit-rating'); setLoading(btn, true);
+ if (!_selectedRating) return;
+ const komentar = q('rating-comment')?.value.trim() || '';
+ const btn = q('btn-submit-rating'); setLoading(btn, true);
 
-  const res = await saveSiteRating(_selectedRating, komentar);
-  setLoading(btn, false);
+ const res = await saveSiteRating(_selectedRating, komentar);
+ setLoading(btn, false);
 
-  if (res.success) {
-    localStorage.setItem(RATING_DONE_KEY, '1');
-    sendRatingEmail(_selectedRating, komentar);
-    closeModal('modal-rating');
-    showToast('Terima kasih', 'Penilaian Anda telah dikirim.', 'success');
-  } else {
-    showToast('Gagal', res.error || 'Gagal menyimpan penilaian.', 'error');
-  }
+ if (res.success) {
+ localStorage.setItem(RATING_DONE_KEY, '1');
+ sendRatingEmail(_selectedRating, komentar);
+ closeModal('modal-rating');
+ showToast('Terima kasih', 'Penilaian Anda telah dikirim.', 'success');
+ } else {
+ showToast('Gagal', res.error || 'Gagal menyimpan penilaian.', 'error');
+ }
 }
 
 function closeRatingModal() {
-  localStorage.setItem(RATING_DONE_KEY, '1');
-  closeModal('modal-rating');
+ localStorage.setItem(RATING_DONE_KEY, '1');
+ closeModal('modal-rating');
 }
 
 function sendRatingEmail(rating, komentar) {
-  const EMAILJS_SERVICE  = 'service_pyimyzb';
-  const EMAILJS_TEMPLATE = 'template_stf6xqs';
-  const EMAILJS_KEY      = 'HAzuBBggwHvM8b1YU';
+ const EMAILJS_SERVICE = 'service_pyimyzb';
+ const EMAILJS_TEMPLATE = 'template_stf6xqs';
+ const EMAILJS_KEY = 'HAzuBBggwHvM8b1YU';
 
-  if (!window.emailjs) return;
-  const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
-  const nama  = currentProfile?.nama_lengkap || 'Anonim';
+ if (!window.emailjs) return;
+ const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+ const nama = currentProfile?.nama_lengkap || 'Anonim';
 
-  emailjs.init({ publicKey: EMAILJS_KEY });
-  emailjs.send(EMAILJS_SERVICE, EMAILJS_TEMPLATE, {
-    from_name:  nama,
-    rating:     rating,
-    stars:      stars,
-    komentar:   komentar || '(tidak ada komentar)',
-    timestamp:  new Date().toLocaleString('id-ID'),
-    website:    'KisiKisi 8F'
-  }).then(() => {
-    console.log('[Email] Rating terkirim ke email.');
-  }).catch(err => {
-    console.warn('[Email] Gagal kirim email:', err);
-  });
+ emailjs.init({ publicKey: EMAILJS_KEY });
+ emailjs.send(EMAILJS_SERVICE, EMAILJS_TEMPLATE, {
+ from_name: nama,
+ rating: rating,
+ stars: stars,
+ komentar: komentar || '(tidak ada komentar)',
+ timestamp: new Date().toLocaleString('id-ID'),
+ website: 'KisiKisi 8F'
+ }).then(() => {
+ console.log('[Email] Rating terkirim ke email.');
+ }).catch(err => {
+ console.warn('[Email] Gagal kirim email:', err);
+ });
 }
 
 // ════════════════════════════════════════════════════════════
-//  HALAMAN RATING PUBLIK — Semua orang bisa lihat
-//  Menu "Rating" di dashboard
+// HALAMAN RATING PUBLIK — Semua orang bisa lihat
+// Menu "Rating" di dashboard
 // ════════════════════════════════════════════════════════════
 
-let _myRatingData = null; // cache rating milik user saat ini
+// ── Render bintang SVG (profesional, tanpa unicode/emoji) ──
+function renderStars(rating, size) {
+  size = size || 14;
+  return [1,2,3,4,5].map(function(i) {
+    var filled = i <= rating;
+    return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="'+(filled?'var(--amber)':'none')+'" stroke="var(--amber)" stroke-width="1.5" stroke-linejoin="round"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>';
+  }).join('');
+}
+
+let _myRatingData = null;
+let _ratingsLoading = false;
 
 async function openRatingPage() {
   showPage('page-rating');
-  await loadPublicRatings();
-  // Realtime: auto-update saat ada INSERT/UPDATE/DELETE di ratings
-  rtRatings(() => loadPublicRatings());
+  await loadPublicRatings(false);
 }
 
-async function loadPublicRatings() {
-  const summEl  = q('public-rating-summary');
-  const listEl  = q('public-rating-list');
-  const myEl    = q('my-rating-section');
-  if (!summEl || !listEl) return;
+// silent=true → skip skeleton agar tidak flicker saat RT update
+async function loadPublicRatings(silent) {
+  if (_ratingsLoading) return;
+  _ratingsLoading = true;
+  const summEl = q('public-rating-summary');
+  const listEl = q('public-rating-list');
+  const myEl   = q('my-rating-section');
+  if (!summEl || !listEl) { _ratingsLoading = false; return; }
 
-  // Skeleton
-  summEl.innerHTML = `<div class="skel" style="height:80px;border-radius:14px"></div>`;
-  listEl.innerHTML = `<div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div>`.repeat(3);
-
-  const [{ data, error }, stats, myRating] = await Promise.all([
-    getAllRatings(),
-    getRatingStats(),
-    currentUser ? getMyRating() : Promise.resolve(null)
-  ]);
-
-  _myRatingData = myRating;
-
-  // ── RINGKASAN ──
-  if (!error && data.length) {
-    const fullStars = Math.round(stats.avg);
-    summEl.innerHTML = `
-      <div class="rating-summary-card">
-        <div class="rating-big-avg">${stats.avg}</div>
-        <div class="rating-big-stars">${'★'.repeat(fullStars)}${'☆'.repeat(5-fullStars)}</div>
-        <div class="rating-big-count">dari ${stats.count} penilaian</div>
-      </div>`;
-  } else {
-    summEl.innerHTML = `<div class="empty-hint" style="text-align:center;padding:20px">Belum ada penilaian.</div>`;
+  if (!silent) {
+    summEl.innerHTML = '<div class="skel" style="height:80px;border-radius:14px"></div>';
+    listEl.innerHTML = '<div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div><div class="skel" style="height:70px;border-radius:12px;margin-bottom:8px"></div><div class="skel" style="height:70px;border-radius:12px"></div>';
   }
 
-  // ── RATING SAYA ──
-  if (myEl && currentUser) {
-    myEl.style.display = 'block';
-    if (myRating) {
-      const myStars = '★'.repeat(myRating.rating) + '☆'.repeat(5 - myRating.rating);
-      myEl.innerHTML = `
-        <div class="my-rating-card">
-          <div class="my-rating-label">Penilaian Anda</div>
-          <div class="my-rating-stars">${myStars}</div>
-          <div class="my-rating-comment">${myRating.komentar ? `"${esc(myRating.komentar)}"` : '<span style="color:var(--dim)">Tidak ada komentar</span>'}</div>
-          <div class="my-rating-date">${fmtDate(myRating.updated_at || myRating.created_at)}</div>
-          <div style="display:flex;gap:8px;margin-top:12px">
-            <button class="btn btn-ghost btn-sm" onclick="openEditRatingModal()">✏️ Edit</button>
-            <button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)" onclick="confirmDeleteRating()">🗑️ Hapus</button>
-          </div>
-        </div>`;
+  try {
+    const [ratingRes, stats, myRating] = await Promise.all([
+      getAllRatings(),
+      getRatingStats(),
+      currentUser ? getMyRating() : Promise.resolve(null)
+    ]);
+    const data  = ratingRes.data;
+    const error = ratingRes.error;
+    _myRatingData = myRating;
+
+    // ── Ringkasan ──
+    if (!error && data && data.length) {
+      summEl.innerHTML = '<div class="rating-summary-card">' +
+        '<div class="rating-big-avg">' + stats.avg + '</div>' +
+        '<div class="rating-big-stars">' + renderStars(Math.round(stats.avg), 22) + '</div>' +
+        '<div class="rating-big-count">dari ' + stats.count + ' penilaian</div>' +
+        '</div>';
     } else {
-      myEl.innerHTML = `
-        <div class="my-rating-card empty">
-          <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Anda belum memberikan penilaian.</div>
-          <button class="btn btn-primary btn-sm" onclick="openAddRatingModal()">⭐ Beri Penilaian</button>
-        </div>`;
+      summEl.innerHTML = '<div class="empty-hint" style="text-align:center;padding:20px">Belum ada penilaian.</div>';
     }
-  } else if (myEl) {
-    myEl.style.display = 'block';
-    myEl.innerHTML = `<div class="my-rating-card empty">
-      <div style="font-size:13px;color:var(--muted)">Login untuk memberi penilaian.</div>
-    </div>`;
-  }
 
-  // ── DAFTAR SEMUA RATING ──
-  if (!data || !data.length) {
-    listEl.innerHTML = `<div class="empty-hint" style="text-align:center;padding:24px 0">Belum ada penilaian.</div>`;
-    return;
-  }
+    // ── Rating Saya ──
+    if (myEl && currentUser) {
+      myEl.style.display = 'block';
+      if (myRating) {
+        myEl.innerHTML = '<div class="my-rating-card">' +
+          '<div class="my-rating-label">Penilaian Anda</div>' +
+          '<div class="my-rating-stars">' + renderStars(myRating.rating, 18) + '</div>' +
+          '<div class="my-rating-comment">' + (myRating.komentar ? '&ldquo;' + esc(myRating.komentar) + '&rdquo;' : '<span style="color:var(--dim)">Tidak ada komentar</span>') + '</div>' +
+          '<div class="my-rating-date">' + fmtDate(myRating.updated_at || myRating.created_at) + '</div>' +
+          '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button class="btn btn-ghost btn-sm" onclick="openEditRatingModal()">Edit</button>' +
+          '<button class="btn btn-danger btn-sm" onclick="confirmDeleteRating()">Hapus</button>' +
+          '</div></div>';
+      } else {
+        myEl.innerHTML = '<div class="my-rating-card empty">' +
+          '<div style="font-size:13px;color:var(--muted);margin-bottom:12px">Anda belum memberikan penilaian.</div>' +
+          '<button class="btn btn-primary btn-sm" onclick="openAddRatingModal()">Beri Penilaian</button>' +
+          '</div>';
+      }
+    } else if (myEl) {
+      myEl.style.display = 'block';
+      myEl.innerHTML = '<div class="my-rating-card empty"><div style="font-size:13px;color:var(--muted)">Login untuk memberi penilaian.</div></div>';
+    }
 
-  listEl.innerHTML = data.map((r, i) => {
-    const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
-    const isMe  = currentUser && r.user_id === currentUser.id;
-    return `
-      <div class="rating-item ${isMe ? 'rating-item-me' : ''}" style="animation-delay:${i*.04}s">
-        <div class="rating-item-top">
-          <div style="display:flex;align-items:center;gap:10px">
-            <div class="avatar" style="width:32px;height:32px;font-size:12px">${r.nama_lengkap.charAt(0).toUpperCase()}</div>
-            <div>
-              <div class="rating-item-name">${esc(r.nama_lengkap)} ${isMe ? '<span class="rating-me-badge">(Saya)</span>' : ''}</div>
-              <div style="font-size:11px;color:var(--dim)">${fmtDate(r.created_at)}</div>
-            </div>
-          </div>
-          <div class="rating-stars">${stars}</div>
-        </div>
-        ${r.komentar ? `<div class="rating-comment">"${esc(r.komentar)}"</div>` : ''}
-      </div>`;
-  }).join('');
+    // ── Daftar semua rating ──
+    if (!data || !data.length) {
+      listEl.innerHTML = '<div class="empty-hint" style="text-align:center;padding:24px 0">Belum ada penilaian.</div>';
+    } else {
+      listEl.innerHTML = data.map(function(r, i) {
+        var isMe = currentUser && r.user_id === currentUser.id;
+        return '<div class="rating-item ' + (isMe ? 'rating-item-me' : '') + '" style="animation-delay:' + (i*.04) + 's">' +
+          '<div class="rating-item-top">' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div class="avatar" style="width:32px;height:32px;font-size:12px">' + r.nama_lengkap.charAt(0).toUpperCase() + '</div>' +
+          '<div>' +
+          '<div class="rating-item-name">' + esc(r.nama_lengkap) + (isMe ? ' <span class="rating-me-badge">Saya</span>' : '') + '</div>' +
+          '<div style="font-size:11px;color:var(--dim)">' + fmtDate(r.created_at) + '</div>' +
+          '</div></div>' +
+          '<div class="rating-stars-svg">' + renderStars(r.rating, 14) + '</div>' +
+          '</div>' +
+          (r.komentar ? '<div class="rating-comment">&ldquo;' + esc(r.komentar) + '&rdquo;</div>' : '') +
+          '</div>';
+      }).join('');
+    }
+  } catch(e) {
+    console.error('[Rating] loadPublicRatings error:', e);
+  } finally {
+    _ratingsLoading = false;
+  }
 }
 
 // ── Modal Tambah/Edit Rating (dari halaman Rating) ────────
@@ -1838,156 +1861,161 @@ let _editingRating = false;
 function openAddRatingModal() {
   _editingRating = false;
   _selectedRating = 0;
-  document.querySelectorAll('.star-btn').forEach(s => s.classList.remove('active'));
-  const lbl = q('star-label'); if (lbl) lbl.textContent = 'Ketuk bintang untuk memberi nilai';
+  document.querySelectorAll('.star-btn').forEach(s => { s.classList.remove('active'); s.classList.remove('hover-active'); });
+  const lbl = q('star-label'); if (lbl) lbl.textContent = 'Seleksi bintang untuk memberi nilai';
   const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = 'none';
   const btn = q('btn-submit-rating'); if (btn) { btn.disabled = true; btn.textContent = 'Kirim Penilaian'; }
   const resEl = q('rating-quiz-result'); if (resEl) resEl.style.display = 'none';
   const title = q('modal-rating-title'); if (title) title.textContent = 'Beri Penilaian';
   if (q('rating-comment')) q('rating-comment').value = '';
   openModal('modal-rating');
+  initStarHover();
 }
 
 function openEditRatingModal() {
-  if (!_myRatingData) return;
-  _editingRating = true;
-  _selectedRating = _myRatingData.rating;
-  const stars = document.querySelectorAll('.star-btn');
-  stars.forEach((s, i) => s.classList.toggle('active', i < _myRatingData.rating));
-  const labels = ['', 'Kurang bagus', 'Cukup', 'Lumayan', 'Bagus', 'Luar biasa'];
-  const lbl = q('star-label'); if (lbl) lbl.textContent = labels[_myRatingData.rating] || '';
-  const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = 'block';
-  const btn = q('btn-submit-rating'); if (btn) { btn.disabled = false; btn.textContent = 'Simpan Perubahan'; }
-  const resEl = q('rating-quiz-result'); if (resEl) resEl.style.display = 'none';
-  const title = q('modal-rating-title'); if (title) title.textContent = 'Edit Penilaian';
-  if (q('rating-comment')) q('rating-comment').value = _myRatingData.komentar || '';
-  openModal('modal-rating');
+ if (!_myRatingData) return;
+ _editingRating = true;
+ _selectedRating = _myRatingData.rating;
+ const stars = document.querySelectorAll('.star-btn');
+ stars.forEach((s, i) => s.classList.toggle('active', i < _myRatingData.rating));
+ const labels = ['', 'Kurang bagus', 'Cukup', 'Lumayan', 'Bagus', 'Luar biasa'];
+ const lbl = q('star-label'); if (lbl) lbl.textContent = labels[_myRatingData.rating] || '';
+ const wrap = q('rating-comment-wrap'); if (wrap) wrap.style.display = 'block';
+ const btn = q('btn-submit-rating'); if (btn) { btn.disabled = false; btn.textContent = 'Simpan Perubahan'; }
+ const resEl = q('rating-quiz-result'); if (resEl) resEl.style.display = 'none';
+ const title = q('modal-rating-title'); if (title) title.textContent = 'Edit Penilaian';
+ if (q('rating-comment')) q('rating-comment').value = _myRatingData.komentar || '';
+ openModal('modal-rating');
 }
 
 // Override submitRating untuk support edit mode
 async function submitRating() {
-  if (!_selectedRating) return;
-  const komentar = q('rating-comment')?.value.trim() || '';
-  const btn = q('btn-submit-rating'); setLoading(btn, true);
+ if (!_selectedRating) return;
+ const komentar = q('rating-comment')?.value.trim() || '';
+ const btn = q('btn-submit-rating'); setLoading(btn, true);
 
-  let res;
-  if (_editingRating) {
-    res = await editRating(_selectedRating, komentar);
-  } else {
-    res = await saveSiteRating(_selectedRating, komentar);
-  }
-  setLoading(btn, false);
+ let res;
+ if (_editingRating) {
+ res = await editRating(_selectedRating, komentar);
+ } else {
+ res = await saveSiteRating(_selectedRating, komentar);
+ }
+ setLoading(btn, false);
 
-  if (res.success) {
-    if (!_editingRating) {
-      localStorage.setItem(RATING_DONE_KEY, '1');
-      sendRatingEmail(_selectedRating, komentar);
-    }
-    closeModal('modal-rating');
-    showToast('Tersimpan', _editingRating ? 'Penilaian diperbarui.' : 'Terima kasih atas penilaian Anda.', 'success');
-    // Refresh tidak perlu dipanggil manual — realtime subscription akan trigger otomatis
-  } else {
-    showToast('Gagal', res.error || 'Gagal menyimpan penilaian.', 'error');
-  }
+ if (res.success) {
+ if (!_editingRating) {
+ localStorage.setItem(RATING_DONE_KEY, '1');
+ sendRatingEmail(_selectedRating, komentar);
+ }
+ closeModal('modal-rating');
+ showToast('Tersimpan', _editingRating ? 'Penilaian diperbarui.' : 'Terima kasih atas penilaian Anda.', 'success');
+ // Refresh tidak perlu dipanggil manual — realtime subscription akan trigger otomatis
+ } else {
+ showToast('Gagal', res.error || 'Gagal menyimpan penilaian.', 'error');
+ }
 }
 
 async function confirmDeleteRating() {
-  if (!confirm('Hapus penilaian Anda?')) return;
-  const res = await deleteMyRating();
-  if (res.success) {
-    _myRatingData = null;
-    localStorage.removeItem(RATING_DONE_KEY);
-    showToast('Dihapus', 'Penilaian Anda telah dihapus.', 'info');
-    loadPublicRatings();
-    if (q('admin-ratings')?.style.display !== 'none') loadAdminRatings();
-  } else {
-    showToast('Gagal', res.error, 'error');
-  }
+ if (!confirm('Hapus penilaian Anda?')) return;
+ const res = await deleteMyRating();
+ if (res.success) {
+ _myRatingData = null;
+ localStorage.removeItem(RATING_DONE_KEY);
+ showToast('Dihapus', 'Penilaian Anda telah dihapus.', 'info');
+   loadPublicRatings(true);
+   if (q('admin-ratings')?.style.display !== 'none') loadAdminRatings();
+ } else {
+ showToast('Gagal', res.error, 'error');
+ }
 }
 
 // ════════════════════════════════════════════════════════════
-//  ADMIN — ONLINE USERS
+// ADMIN — ONLINE USERS
 // ════════════════════════════════════════════════════════════
 
 async function loadOnlineUsers() {
-  const list    = q('online-users-list');
-  const countEl = q('online-count-text');
-  if (!list) return;
+ const list = q('online-users-list');
+ const countEl = q('online-count-text');
+ if (!list) return;
 
-  list.innerHTML = `<div class="skel" style="height:60px;border-radius:12px;margin-bottom:8px"></div>`.repeat(3);
+ list.innerHTML = `<div class="skel" style="height:60px;border-radius:12px;margin-bottom:8px"></div>`.repeat(3);
 
-  const { data } = await getOnlineUsers();
-  const now = Date.now();
+ const { data } = await getOnlineUsers();
+ const now = Date.now();
 
-  if (!data.length) {
-    if (countEl) countEl.textContent = '0 pengguna online saat ini';
-    list.innerHTML = `<div class="empty-hint" style="text-align:center;padding:24px 0">Belum ada pengguna yang aktif.</div>`;
-    return;
-  }
+ if (!data.length) {
+ if (countEl) countEl.textContent = '0 pengguna online saat ini';
+ list.innerHTML = `<div class="empty-hint" style="text-align:center;padding:24px 0">Belum ada pengguna yang aktif.</div>`;
+ return;
+ }
 
-  if (countEl) countEl.textContent = `${data.length} pengguna sedang online`;
+ if (countEl) countEl.textContent = `${data.length} pengguna sedang online`;
 
-  const pageLabels = { dashboard: '📋 Dashboard', kisi: '📖 Belajar', admin: '⭐ Admin Panel' };
+ const pageLabels = { dashboard: 'Dashboard', kisi: 'Belajar', admin: 'Admin Panel' };
 
-  list.innerHTML = data.map((u, i) => {
-    const secsAgo = Math.round((now - new Date(u.last_seen).getTime()) / 1000);
-    const timeLabel = secsAgo < 60 ? 'Baru saja' : `${Math.floor(secsAgo / 60)} mnt lalu`;
-    const pageLabel = pageLabels[u.page] || ('📄 ' + u.page);
-    return `
-      <div class="online-user-card" style="animation-delay:${i*.05}s">
-        <div class="avatar" style="width:36px;height:36px;font-size:13px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
-        <div class="online-dot"></div>
-        <div style="flex:1;min-width:0">
-          <div class="online-user-name">${esc(u.nama_lengkap)}</div>
-          <div class="online-user-page">${pageLabel}</div>
-        </div>
-        <div class="online-user-time">${timeLabel}</div>
-      </div>`;
-  }).join('');
+ list.innerHTML = data.map((u, i) => {
+ const secsAgo = Math.round((now - new Date(u.last_seen).getTime()) / 1000);
+ const timeLabel = secsAgo < 60 ? 'Baru saja' : `${Math.floor(secsAgo / 60)} mnt lalu`;
+ const pageLabel = pageLabels[u.page] || u.page;
+ return `
+ <div class="online-user-card" style="animation-delay:${i*.05}s">
+ <div class="avatar" style="width:36px;height:36px;font-size:13px">${u.nama_lengkap.charAt(0).toUpperCase()}</div>
+ <div class="online-dot"></div>
+ <div style="flex:1;min-width:0">
+ <div class="online-user-name">${esc(u.nama_lengkap)}</div>
+ <div class="online-user-page">${pageLabel}</div>
+ </div>
+ <div class="online-user-time">${timeLabel}</div>
+ </div>`;
+ }).join('');
 }
 
 // ════════════════════════════════════════════════════════════
-//  ADMIN — RATINGS
+// ADMIN — RATINGS (realtime, SVG stars, no flicker)
 // ════════════════════════════════════════════════════════════
 
+let _adminRatingsLoading = false;
+
 async function loadAdminRatings() {
+  if (_adminRatingsLoading) return;
+  _adminRatingsLoading = true;
   const summary = q('ratings-summary');
   const list    = q('ratings-list');
-  if (!summary && !list) return;
+  if (!summary && !list) { _adminRatingsLoading = false; return; }
 
-  const { data } = await getAllRatings();
-
-  if (!data.length) {
-    if (summary) summary.innerHTML = `<div class="empty-hint">Belum ada penilaian.</div>`;
-    if (list)    list.innerHTML    = '';
-    return;
-  }
-
-  const avg = (data.reduce((s, r) => s + r.rating, 0) / data.length).toFixed(1);
-  const fullStars = Math.round(avg);
-  const starsStr  = '★'.repeat(fullStars) + '☆'.repeat(5 - fullStars);
-
-  if (summary) {
-    summary.innerHTML = `
-      <div class="ratings-summary-box">
-        <div class="ratings-avg">${avg}</div>
-        <div class="ratings-stars-avg">${starsStr}</div>
-        <div class="ratings-count">dari ${data.length} penilaian</div>
-      </div>`;
-  }
-
-  if (list) {
-    list.innerHTML = data.map((r, i) => {
-      const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
-      return `
-        <div class="rating-item" style="animation-delay:${i*.04}s">
-          <div class="rating-item-top">
-            <div class="rating-item-name">${esc(r.nama_lengkap)}</div>
-            <div class="rating-stars">${stars}</div>
-          </div>
-          ${r.komentar ? `<div class="rating-comment">"${esc(r.komentar)}"</div>` : ''}
-          <div style="font-size:11px;color:var(--dim);margin-top:4px">${fmtDate(r.created_at)}</div>
-        </div>`;
-    }).join('');
+  try {
+    const { data } = await getAllRatings();
+    if (!data || !data.length) {
+      if (summary) summary.innerHTML = '<div class="empty-hint">Belum ada penilaian.</div>';
+      if (list)    list.innerHTML    = '';
+      return;
+    }
+    const avg       = (data.reduce(function(s,r){ return s+r.rating; }, 0) / data.length).toFixed(1);
+    if (summary) {
+      summary.innerHTML = '<div class="ratings-summary-box">' +
+        '<div class="ratings-avg">' + avg + '</div>' +
+        '<div class="rating-stars-svg" style="margin:4px 0">' + renderStars(Math.round(parseFloat(avg)), 18) + '</div>' +
+        '<div class="ratings-count">dari ' + data.length + ' penilaian</div>' +
+        '</div>';
+    }
+    if (list) {
+      list.innerHTML = data.map(function(r, i) {
+        return '<div class="rating-item" style="animation-delay:' + (i*.04) + 's">' +
+          '<div class="rating-item-top">' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div class="avatar" style="width:32px;height:32px;font-size:11px">' + r.nama_lengkap.charAt(0).toUpperCase() + '</div>' +
+          '<div><div class="rating-item-name">' + esc(r.nama_lengkap) + '</div>' +
+          '<div style="font-size:11px;color:var(--dim)">' + fmtDate(r.created_at) + '</div></div>' +
+          '</div>' +
+          '<div class="rating-stars-svg">' + renderStars(r.rating, 14) + '</div>' +
+          '</div>' +
+          (r.komentar ? '<div class="rating-comment">&ldquo;' + esc(r.komentar) + '&rdquo;</div>' : '') +
+          '</div>';
+      }).join('');
+    }
+  } catch(e) {
+    console.error('[Admin] loadAdminRatings error:', e);
+  } finally {
+    _adminRatingsLoading = false;
   }
 }
